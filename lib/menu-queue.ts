@@ -609,6 +609,7 @@ export function createTelegramQueueMenuRuntime<
   ) => Promise<TelegramModelMenuState<TModel>>;
   getStoredModelMenuState: (
     messageId: number | undefined,
+    chatId?: number,
   ) => TelegramModelMenuState<TModel> | undefined;
   storeModelMenuState: (state: TelegramModelMenuState<TModel>) => void;
   updateStatusMessage: (
@@ -692,6 +693,7 @@ function createQueueMenuCallbackHandler<
   ) => Promise<number | undefined>;
   getStoredModelMenuState: (
     messageId: number | undefined,
+    chatId?: number,
   ) => TelegramModelMenuState<TModel> | undefined;
   updateStatusMessage: (
     state: TelegramModelMenuState<TModel>,
@@ -713,7 +715,7 @@ function createQueueMenuCallbackHandler<
     if (!data || typeof chatId !== "number" || typeof messageId !== "number")
       return false;
     if (data === "menu:queue" || data === "status:queue") {
-      const state = deps.getStoredModelMenuState(messageId);
+      const state = deps.getStoredModelMenuState(messageId, chatId);
       if (!state) {
         await deps.answerCallbackQuery(
           query.id,

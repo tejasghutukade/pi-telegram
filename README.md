@@ -2,13 +2,27 @@
 
 ![pi-telegram screenshot](screenshot.png)
 
-**Telegram runtime adapter for π.**
+**Telegram runtime adapter for Pi.**
 
-`pi-telegram` turns a private Telegram DM into a session-local operator console for π. It admits work, preserves context, streams readable replies, keeps busy sessions usable through queues, lets other extensions share one bot, and turns assistant-authored intent into native Telegram artifacts. It is also a voice-provider platform: companion extensions can supply Telegram transcription and synthesis providers while `pi-telegram` keeps ownership of transport, queueing, and reply policy.
+`pi-telegram` turns a private Telegram DM into a session-local operator console for Pi. It admits work, preserves context, streams readable replies, keeps busy sessions usable through queues, lets other extensions share one bot, and turns assistant-authored intent into native Telegram artifacts. It is also a voice-provider platform: companion extensions can supply Telegram transcription and synthesis providers while `pi-telegram` keeps ownership of transport, queueing, and reply policy.
 
 The product shape is a mobile companion for a live Pi session: start work in the terminal, then continue from Telegram on the couch or outside. It is not a remote terminal, PTY supervisor, or process launcher, and it intentionally avoids pretending to own Pi's interactive TUI.
 
 This repository is an actively maintained fork of [`badlogic/pi-telegram`](https://github.com/badlogic/pi-telegram). It started from upstream commit [`cb34008`](https://github.com/badlogic/pi-telegram/commit/cb34008460b6c1ca036d92322f69d87f626be0fc) and has since diverged substantially.
+
+## How to read this README
+
+This README is the product hyperindex for `pi-telegram`: a compact representation of the extension from several lenses, not a dump of every implementation detail.
+
+- **Operator companion**: continue and supervise a live Pi session from Telegram without turning Telegram into a fake terminal.
+- **Telegram UI harness**: menus, settings, queue controls, native typing/activity, Rich Markdown replies, drafts, buttons, voice, files, and artifacts become Telegram-shaped affordances around Pi.
+- **Runtime adapter**: Telegram turns map into Pi lifecycle, queueing, model switching, compaction, previews, active/final replies, and ownership rules.
+- **Threaded organism**: optional multi-instance mode lets one leader and visible follower Pi processes share one bot through named Telegram Threads.
+- **Companion-extension platform**: stable APIs let other extensions add sections, commands, status rows, update handlers, voice providers, and outbound/inbound behavior without owning polling.
+- **Safety boundary**: the bridge exposes a safe mobile companion subset, not arbitrary TUI/session control, hidden process launch, or raw terminal command dispatch.
+- **Release map**: this file points to focused docs for the deeper contracts; `BACKLOG.md` tracks open release work and `CHANGELOG.md` records completed behavior.
+
+Use this README to understand the extension's shape and values first, then follow the focused docs for exact contracts.
 
 ## Install
 
@@ -33,9 +47,9 @@ pi install git:github.com/llblab/pi-telegram
 3. Pick a name and username
 4. Copy the bot token
 
-### 2. Configure the bot token in π
+### 2. Configure the bot token in Pi
 
-Start π, then run:
+Start Pi, then run:
 
 ```bash
 /telegram-setup
@@ -43,13 +57,13 @@ Start π, then run:
 
 Paste your bot token when prompted. If a bot token is already saved in `~/.pi/agent/telegram.json`, the setup prompt shows that stored value by default. Otherwise it prefills from the first configured environment variable in `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_KEY`, `TELEGRAM_TOKEN`, or `TELEGRAM_KEY`. The saved config file is written atomically with private `0600` permissions.
 
-### 3. Connect this π session
+### 3. Connect this Pi session
 
 ```bash
 /telegram-connect
 ```
 
-The adapter is session-local: only one π instance polls Telegram at a time. `/telegram-connect` records only external control/polling ownership in `~/.pi/agent/locks.json`; live ownership moves require confirmation, inherited child sessions do not start polling unless they take ownership, and same-`cwd` restarts resume automatically. Local queue and reply state stay per Pi instance, so an instance that loses Telegram control still finishes work it already accepted.
+The adapter is session-local: only one Pi instance polls Telegram at a time. In classic mode, `/telegram-connect` records external control/polling ownership in `~/.pi/agent/locks.json`. In multi-instance bus mode, `/telegram-connect` joins the local Telegram organism: the first live instance becomes leader, later live instances register as followers instead of taking over while the leader heartbeat is healthy. Local queue and reply state stay per Pi instance, so an instance that loses Telegram control still finishes work it already accepted.
 
 ### 4. Pair your Telegram account
 
@@ -60,72 +74,87 @@ The first user to message the bot becomes the exclusive owner of the adapter. Me
 
 ### Environment-only configuration
 
-Most day-to-day controls live in the Telegram menu or π commands. A few important runtime knobs intentionally stay in environment variables because they affect bootstrap, networking, or transport limits before a menu can help:
+Most day-to-day controls live in the Telegram menu or Pi commands. A few important runtime knobs intentionally stay in environment variables because they affect bootstrap, networking, or transport limits before a menu can help:
 
 - **Bot token bootstrap**: `/telegram-setup` can prefill from `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_KEY`, `TELEGRAM_TOKEN`, or `TELEGRAM_KEY` when no token is already saved.
 - **HTTP/HTTPS proxy**: native `fetch` can use `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` when Node's environment proxy mode is enabled. Use `NODE_USE_ENV_PROXY=1` or start Node with `--use-env-proxy`. SOCKS5 is not part of the zero-dependency core. If you need it, run a local HTTP-to-SOCKS bridge or system tunnel and point `HTTP_PROXY` / `HTTPS_PROXY` at the HTTP endpoint.
+- **Telegram network family**: `PI_TELEGRAM_NETWORK_FAMILY=auto|ipv4|ipv6|ipv4-fallback` controls Bot API transport only. The default is `ipv4-fallback`: try native `fetch` first, then retry transport-level failures through IPv4-only HTTPS. Use `auto` to force native `fetch` only, or `ipv4`/`ipv6` to force a family.
 - **Agent data root / temp location**: `PI_CODING_AGENT_DIR` changes the base agent directory used for `telegram.json`, locks, generated outbound-handler artifacts, and Telegram temp files. When unset, the adapter uses `~/.pi/agent`, so inbound Telegram files land in `~/.pi/agent/tmp/telegram`.
 - **Inbound file limit**: `PI_TELEGRAM_INBOUND_FILE_MAX_BYTES` or `TELEGRAM_MAX_FILE_SIZE_BYTES` changes the default 50 MiB Telegram download limit.
 - **Outbound attachment limit**: `PI_TELEGRAM_OUTBOUND_ATTACHMENT_MAX_BYTES` or `TELEGRAM_MAX_ATTACHMENT_SIZE_BYTES` changes the default 50 MiB `telegram_attach` delivery limit.
 
 Assistant Markdown is delivered through Telegram's native Rich Message API. There is no `telegram.json` rendering toggle: final replies use `sendRichMessage`, and streaming previews use `sendRichMessageDraft` when Telegram drafts are available.
 
-Set these variables before launching π. Some transport defaults (notably Telegram temp directory and inbound/outbound byte-limit constants) are intentionally captured when the extension modules load, while setup-token defaults and agent-dir lookups used by config/locks are read through their runtime helpers.
+Long-running Telegram turns use Telegram's native active status as the activity indicator: technically Bot API `sendChatAction(typing)`, presented in product language as `...active` even when Telegram clients render it as typing dots. The bridge does not expose an activity verbosity setting; active status is the only automatic in-chat work signal before the final reply.
+
+Set these variables before launching Pi. Some transport defaults (notably Telegram temp directory and inbound/outbound byte-limit constants) are intentionally captured when the extension modules load, while setup-token defaults and agent-dir lookups used by config/locks are read through their runtime helpers.
 
 ## Use
 
-Once paired, chat with your bot in Telegram. Text, images, files, replies, edits, media groups, and configured handler output are forwarded into π as Telegram-originated turns.
+Once paired, chat with your bot in Telegram. Text, images, files, replies, edits, media groups, and configured handler output are forwarded into Pi as Telegram-originated turns.
 
 What it feels like:
 
-- Start work in the terminal, walk away, and keep supervising the same live π session from Telegram.
-- Open `/start` and get a Telegram control panel for the running π session: status, prompt templates, model, thinking, settings, and queue.
-- Fire off three tasks while π is busy. They become visible queue items instead of terminal noise.
+- Start work in the terminal, walk away, and keep supervising the same live Pi session from Telegram.
+- Open `/start` and get a Telegram control panel for the running Pi session: status, prompt templates, model, thinking, settings, and queue.
+- Fire off three tasks while Pi is busy. They become visible queue items instead of terminal noise.
 - Open Queue from the menu, inspect waiting work, delete stale prompts, or move important work forward.
 - Switch models from Telegram mid-run; the adapter schedules a safe continuation instead of tearing state apart.
-- Send a voice note; a configured inbound handler or registered STT provider transcribes it; π answers in the same chat.
-- Drop a screenshot and ask, "what is broken here?" The image payload reaches π with the local file context.
-- Ask for a generated file; when π calls `telegram_attach`, the artifact returns with the active Telegram reply or is sent directly to the paired/default chat from local work.
+- Send a voice note; a configured inbound handler or registered STT provider transcribes it; Pi answers in the same chat.
+- Drop a screenshot and ask, "what is broken here?" The image payload reaches Pi with the local file context.
+- Ask for a generated file; when Pi calls `telegram_attach`, the artifact returns with the active Telegram reply or is sent directly to the paired/default chat from local work.
 
 ### Telegram controls
 
 Use these inside the Telegram DM with your bot. The main entrypoint is `/start`: it opens the operator menu and exposes many of the important agent controls that can be safely adapted through Pi's extension APIs. The bot does not forward arbitrary terminal slash commands or emulate TUI-only session controls.
 
 - **`/start`**: Pair the first Telegram user when needed, register bot commands, and open the inline application menu with command help, prompt-template commands, status rows, model controls, thinking controls, settings, and queue controls.
-- **`/compact`**: Ask for inline confirmation, then start session compaction when the session is idle; Telegram shows the native typing indicator while manual or automatic compaction is running.
-- **`/next`**: Dispatch the next queued turn, aborting π first if needed.
+- **`/compact`**: Ask for inline confirmation, then start session compaction when the session is idle; Telegram shows the native active indicator while manual or automatic compaction is running.
+- **`/next`**: Dispatch the next queued turn, aborting Pi first if needed.
 - **`/continue`**: Enqueue a priority `continue` prompt.
 - **`/abort`**: Abort the active run without touching the queue. Abort-history applies only to Telegram-owned active turns; later local prompts do not make the next Telegram prompt absorb older queue items.
 - **`/stop`**: Abort the active run and clear waiting Telegram queue items.
 
 Hidden compatibility shortcuts: `/help` and `/status` open the main application menu, `/model` opens model controls, `/thinking` opens reasoning controls, `/queue` opens queue controls, and `/settings` opens bridge settings.
 
-Prompt-template commands are discovered from π prompt templates, mapped to Telegram-safe aliases (`fix-tests.md` becomes `/fix_tests`), shown in `/start`, and expanded before queueing.
+Prompt-template commands are discovered from Pi prompt templates, mapped to Telegram-safe aliases (`fix-tests.md` becomes `/fix_tests`), shown in `/start`, and expanded before queueing.
 
-### π commands
+### Pi commands
 
-Run these inside π, not Telegram:
+Run these inside Pi, not Telegram:
 
 - **`/telegram-setup`**: Configure or update the Telegram bot token.
-- **`/telegram-connect`**: Start polling Telegram updates in the current π session and acquire the singleton lock.
-- **`/telegram-disconnect`**: Stop polling in the current π session and release the singleton lock.
+- **`/telegram-connect`**: Start polling Telegram updates in the current Pi session and acquire the singleton lock.
+- **`/telegram-disconnect`**: Stop polling in the current Pi session and release the singleton lock.
 - **`/telegram-status`**: Inspect adapter status, connection, polling, execution, queue, and recent redacted runtime/API failure events.
 
 ### Files and artifacts
 
 Send files or images directly to the bot. Inbound downloads are saved under `<agent-dir>/tmp/telegram` and default to a 50 MiB limit. The agent dir is `~/.pi/agent` unless `PI_CODING_AGENT_DIR` overrides it.
 
-If you ask π for a generated file, π can call `telegram_attach`: during a Telegram-originated turn the adapter sends it with the next Telegram reply, and during local/TUI work it sends directly to the paired/default chat or explicit `chat_id`. Local work can also use `telegram_message` when you explicitly ask the agent to push a Markdown text message to Telegram; embedded `telegram_button` comments are parsed and attached to that message. Direct local/TUI delivery requires the current π instance to own `/telegram-connect`; if the lock belongs elsewhere, take over before sending. Outbound attachments default to a 50 MiB limit. Environment variables for both limits are listed in [Environment-only configuration](#environment-only-configuration).
+If you ask Pi for a generated file, Pi can call `telegram_attach`: during a Telegram-originated turn the adapter sends it with the next Telegram reply, and during local/TUI work it sends directly to the paired/default chat, a registered follower's assigned thread, or explicit `chat_id` plus optional `thread_id`. Local work can also use `telegram_message` when you explicitly ask the agent to push a Markdown text message to Telegram; embedded `telegram_button` comments are parsed and attached to that message. Direct local/TUI delivery requires the current Pi instance to own `/telegram-connect`, or to be registered with an explicitly enabled multi-instance bus so it can route through the leader; if neither is true, take over or enable/register with the bus before sending. Outbound attachments default to a 50 MiB limit. Environment variables for both limits are listed in [Environment-only configuration](#environment-only-configuration).
+
+### Experimental multi-instance bus
+
+Classic private-chat behavior is the default. To experiment with multiple live Pi instances sharing one bot token, opt in explicitly in `telegram.json`:
+
+```json
+{
+  "bus": { "mode": "multi-instance" }
+}
+```
+
+Only the leader calls `getUpdates`; registered followers authenticate to the local bus with a leader-minted capability secret and route allowlisted, target-scoped Telegram work through the leader. BotFather private-chat threads are the preferred UI targets: the leader provisions its own thread, and user-started follower processes receive fresh visible threads only after explicit `/telegram-connect` registration unless the same live binding identity already has a live binding; newly created follower threads receive a baked 4-6 letter thread name from the assigned slot's curated palette plus a short connected notice so Telegram clients surface the tab. If a live leader later prunes a follower after missed heartbeats, it sends an `Instance <name> disconnected` notice in that follower's thread before cleanup, using the thread name when available and the slot letter as the fallback, so stale tabs are recognizable. Telegram never launches hidden Pi follower processes: to add another instance, start Pi in a terminal and run `/telegram-connect` there. If all threads were closed, the first new owner-created thread is reclaimed for the leader and served locally; later unknown owner-created threads are treated as accidental unbound tabs, the original prompt is preserved, and the bridge offers a target-thread chooser instead of launching hidden processes. Fresh thread names are assigned by the bridge, not by an agent prompt: the bridge picks one of five curated 4-6 letter names for the slot letter and stores it as the instance thread name; existing human-named threads are preserved. Group/thread input is still authorized by `allowedUserId`, and live Telegram smoke testing is still the stability gate for Bot API topic transport, rich drafts, reactions, and chat actions.
 
 ## Core features
 
 ### Operator menu and controls
 
-The inline application menu is the primary operator surface. It exposes status, prompt-template commands, companion-extension Telegram commands, model selection, thinking level selection, settings, and queue inspection/mutation: a Telegram-shaped subset of the important handles normally available from the CLI. A typical control loop stays inside Telegram: open `/start`, inspect status, jump into Queue, delete stale work, switch model, return to the main menu, and keep the π session running without touching the terminal.
+The inline application menu is the primary operator surface. It exposes status, prompt-template commands, companion-extension Telegram commands, model selection, thinking level selection, settings, and queue inspection/mutation: a Telegram-shaped subset of the important handles normally available from the CLI. A typical control loop stays inside Telegram: open `/start`, inspect status, jump into Queue, delete stale work, switch model, return to the main menu, and keep the Pi session running without touching the terminal.
 
 ### Queue runtime
 
-Messages sent while π is busy enter the prompt queue and are processed in order. Control actions and model-switch continuation turns use higher-priority lanes. Queue processing and reply delivery stay local to the Pi instance that accepted the work, even if `/telegram-connect` later moves elsewhere.
+Messages sent while Pi is busy enter the prompt queue and are processed in order. Control actions and model-switch continuation turns use higher-priority lanes. Queue processing and reply delivery stay local to the Pi instance that accepted the work, even if `/telegram-connect` later moves elsewhere.
 
 The menu is the primary way to inspect and mutate the queue. Reactions are an extra shortcut when Telegram delivers `message_reaction` updates for the chat. The same rules apply to text, voice, files, images, and media groups:
 
@@ -144,9 +173,9 @@ Telegram replies to earlier text or caption messages are forwarded as `[reply]` 
 
 ### Inbound handlers and STT providers
 
-`telegram.json` can define ordered `inboundHandlers` for Telegram → π preprocessing: text translation, voice transcription, OCR, PDF extraction, or any command-template pipeline. Matching handlers run before the turn enters the queue; failed handlers record diagnostics and fall back safely. Legacy `attachmentHandlers` still work as a deprecated compatibility alias appended after `inboundHandlers`.
+`telegram.json` can define ordered `inboundHandlers` for Telegram → Pi preprocessing: text translation, voice transcription, OCR, PDF extraction, or any command-template pipeline. Matching handlers run before the turn enters the queue; failed handlers record diagnostics and fall back safely. Legacy `attachmentHandlers` still work as a deprecated compatibility alias appended after `inboundHandlers`.
 
-A practical voice setup is simple: Telegram `.ogg` arrives, STT runs locally or through your chosen command, stdout is injected as `[outputs]`, and π receives the result as usable prompt context. Extensions can also register programmatic inbound handlers; full voice extensions can register transcription providers. Explicit `inboundHandlers` and legacy `attachmentHandlers` run first, then programmatic inbound handlers, then registered STT providers as fallback for voice/audio files.
+A practical voice setup is simple: Telegram `.ogg` arrives, STT runs locally or through your chosen command, stdout is injected as `[outputs]`, and Pi receives the result as usable prompt context. Extensions can also register programmatic inbound handlers; full voice extensions can register transcription providers. Explicit `inboundHandlers` and legacy `attachmentHandlers` run first, then programmatic inbound handlers, then registered STT providers as fallback for voice/audio files.
 
 ```json
 {
@@ -175,7 +204,7 @@ A practical voice setup is simple: Telegram `.ogg` arrives, STT runs locally or 
 
 ### Outbound handlers, voice synthesis providers, and buttons
 
-Assistant replies can include hidden outbound blocks. `telegram_voice` and `telegram_button` are not π tools; they are assistant-authored HTML comments that the adapter removes from Telegram text and handles after `agent_end`. Recognized blocks must start at column zero on a top-level line outside fenced code, quotes, lists, and indented examples. Do not use JSON button specs, inline comments after visible text, or standalone button tool calls; write normal Markdown plus hidden comments, and add visible parent text if buttons would otherwise be the only output.
+Assistant replies can include hidden outbound blocks. `telegram_voice` and `telegram_button` are not Pi tools; they are assistant-authored HTML comments that the adapter removes from Telegram text and handles after `agent_end`. Recognized blocks must start at column zero on a top-level line outside fenced code, quotes, lists, and indented examples. Do not use JSON button specs, inline comments after visible text, or standalone button tool calls; write normal Markdown plus hidden comments, and add visible parent text if buttons would otherwise be the only output.
 
 Prompt guidance is context-aware: unconfigured sessions receive no Telegram suffix, local/TUI prompts only get explicit direct-delivery guidance, and Telegram-originated turns get the full phone-width output and action-comment contract.
 
@@ -214,7 +243,7 @@ Provider code examples, transcript-caption behavior, and diagnostics patterns li
 
 ### Extension interop
 
-Unknown inline-button callbacks are forwarded to π as `[callback] <data>` when they do not belong to pi-telegram, so other extensions can namespace and handle Telegram buttons without polling the bot themselves. Layered extensions that need synchronous update handling can register a handler on the shared update registry.
+Unknown inline-button callbacks are forwarded to Pi as `[callback] <data>` when they do not belong to pi-telegram, so other extensions can namespace and handle Telegram buttons without polling the bot themselves. Layered extensions that need synchronous update handling can register a handler on the shared update registry.
 
 ### Extension Sections
 
@@ -224,11 +253,11 @@ Import `registerTelegramSection()` from `@llblab/pi-telegram/sections` and retur
 
 ### Proactive push
 
-`telegram.json` can set `proactivePush: true` to send successful local non-Telegram final replies to the paired Telegram chat when no Telegram turn is active and this π instance currently owns `/telegram-connect`. Non-owners skip proactive delivery instead of pushing unrelated local/headless results through a bot they no longer control. Local prompt text is not mirrored because the bot does not own terminal user messages. The mode is off by default and can be toggled from settings.
+`telegram.json` can set `proactivePush: true` to send successful local non-Telegram final replies to Telegram when no Telegram turn is active and this Pi instance currently owns `/telegram-connect` or is registered as a Threaded Mode follower. Non-owners skip proactive delivery instead of pushing unrelated local/headless results through a bot they no longer control. Local prompt text is not mirrored because the bot does not own terminal user messages. The mode is off by default and can be toggled from settings.
 
 ### Time context
 
-`telegram.json` can opt into a compact `[time]` line in Telegram-originated prompts so π has a wall-clock reference for requests such as "today", "now", or scheduling. It is hidden by default and uses the system timezone; the mode can also be changed from Settings → `🕒 Time injection`.
+`telegram.json` can opt into a compact `[time]` line in Telegram-originated prompts so Pi has a wall-clock reference for requests such as "today", "now", or scheduling. It is hidden by default and uses the system timezone; the mode can also be changed from Settings → `🕒 Time injection`.
 
 ```json
 {
@@ -249,7 +278,7 @@ Modes are `hidden`, `always`, and `interval`. `hidden` means no time line is add
 - [Documentation Index](./docs/README.md): technical docs hub.
 - [Architecture](./docs/architecture.md): runtime and subsystem overview.
 - [Public API](./docs/public-api.md): stable commands, config, package entrypoints, assistant markup, and extension APIs.
-- [Inbound Handlers](./docs/inbound.md): Telegram → π preprocessing.
+- [Inbound Handlers](./docs/inbound.md): Telegram → Pi preprocessing.
 - [Outbound Handlers](./docs/outbound.md): final text, voice, and artifact pipelines.
 - [Command Templates](./docs/command-templates.md): portable command-template contract.
 - [Callback Namespaces](./docs/callback-namespaces.md): callback interop for layered extensions.

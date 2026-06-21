@@ -15,13 +15,7 @@ import {
   handleTelegramSectionSettingsOpen,
   type TelegramSectionRegistration,
   type TelegramSectionCallbackHandlerDeps,
-  type TelegramSectionView,
 } from "../lib/sections.ts";
-
-function noop(): void {}
-function noopAsync(): Promise<void> {
-  return Promise.resolve();
-}
 
 function stubSection(
   id: string,

@@ -17,7 +17,6 @@ import {
   createTelegramQueuedPromptEditRuntime,
   formatTelegramTurnStatusSummary,
   getTelegramVoiceReplyMode,
-  TELEGRAM_VOICE_REPLY_MODES,
   truncateTelegramQueueSummary,
   updateQueuedTelegramPromptTurnText,
   updateTelegramPromptTurnText,
@@ -103,6 +102,21 @@ test("Turn runtime builder calls resolveTimeLine with chatId and embeds result",
   assert.match(
     (turn.content[0] as { type: "text"; text: string }).text,
     /\[time\] 2026-05-16 14:32:10 UTC/,
+  );
+});
+
+test("Turn runtime builder adds explicit thread attribute to Telegram prefix", async () => {
+  const buildTurn = createTelegramPromptTurnRuntimeBuilder({
+    allocateQueueOrder: () => 1,
+    downloadFile: async (_fileId, fileName) => `/tmp/${fileName}`,
+    getTelegramThreadLabel: () => "🧭 Axial|bad]name",
+  });
+  const turn = await buildTurn([
+    { message_id: 42, message_thread_id: 7, chat: { id: 7 }, text: "hi" },
+  ]);
+  assert.equal(
+    (turn.content[0] as { type: "text"; text: string }).text,
+    "[telegram|thread:🧭 Axial bad name] hi",
   );
 });
 
@@ -274,6 +288,63 @@ test("Turn runtime omits voice context when reply mode is only the implicit defa
   assert.doesNotMatch(
     (turn.content[0] as { type: "text"; text: string }).text,
     /\[voice\]/,
+  );
+});
+
+test("Turn builder preserves topic thread target", async () => {
+  const turn = await buildTelegramPromptTurnRuntime({
+    telegramPrefix: "[telegram]",
+    messages: [{ message_id: 14, message_thread_id: 42, chat: { id: -1007 } }],
+    queueOrder: 1,
+    rawText: "hello",
+    files: [],
+    statusText: "hello",
+    inferImageMimeType: () => undefined,
+  });
+  assert.deepEqual(turn.target, { chatId: -1007, threadId: 42 });
+});
+
+test("Turn builder keeps private bot topic metadata out of prompt prefix", async () => {
+  const turn = await buildTelegramPromptTurnRuntime({
+    telegramPrefix: "[telegram]",
+    messages: [
+      {
+        message_id: 14,
+        message_thread_id: 42,
+        chat: { id: 7, type: "private" },
+      },
+    ],
+    queueOrder: 1,
+    rawText: "hello",
+    files: [],
+    statusText: "hello",
+    inferImageMimeType: () => undefined,
+  });
+  assert.equal(
+    (turn.content[0] as { type: "text"; text: string }).text,
+    "[telegram] hello",
+  );
+});
+
+test("Turn builder keeps group topic metadata out of prompt prefix", async () => {
+  const turn = await buildTelegramPromptTurnRuntime({
+    telegramPrefix: "[telegram]",
+    messages: [
+      {
+        message_id: 14,
+        message_thread_id: 42,
+        chat: { id: -1007, type: "supergroup" },
+      },
+    ],
+    queueOrder: 1,
+    rawText: "hello",
+    files: [],
+    statusText: "hello",
+    inferImageMimeType: () => undefined,
+  });
+  assert.equal(
+    (turn.content[0] as { type: "text"; text: string }).text,
+    "[telegram] hello",
   );
 });
 

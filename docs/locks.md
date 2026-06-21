@@ -79,6 +79,8 @@ Extensions may add compact fields when useful:
 }
 ```
 
+`pi-telegram` multi-instance mode intentionally keeps only leader-critical coordination fields in its lock entry: live `instanceId`, `heartbeatMs`, `leaderEpoch`, and the leader-minted `busSecret`. The local bus endpoint is derived from the agent directory by default, so it should not be persisted unless a future non-standard transport requires it.
+
 Do not print optional fields in normal UI unless they help the user act.
 
 ## Ownership rules
@@ -123,7 +125,7 @@ Avoid repeating the extension name in the body. Color is encouraged: extension t
 
 The previous owner may use `fs.watch`, mtime polling, or an existing status/timer tick. Long-lived watchers should compare against a snapshotted `pid`/`cwd` identity rather than a live pi context object, because session replacement such as `/new` makes captured contexts stale. The important contract is graceful singleton-runtime shutdown after ownership mismatch while session-local state that does not require polling remains owned by its original instance.
 
-For `pi-telegram`, direct local/TUI delivery tools (`telegram_message` and no-active-turn `telegram_attach`) and proactive local/headless final-result push are singleton-controlled and require current `/telegram-connect` ownership. They must fail or skip delivery when the lock is inactive or active elsewhere. Already accepted Telegram-turn reply delivery, previews, queued attachments, and queue finalization remain session-local and may complete after polling ownership moves away.
+For `pi-telegram`, direct local/TUI delivery tools (`telegram_message` and no-active-turn `telegram_attach`) and proactive local/headless final-result push are singleton-controlled. In classic mode they require current `/telegram-connect` ownership; in explicit multi-instance bus mode a registered follower may send through the leader-owned bus transport instead of direct Bot API transport. They must fail or skip delivery when neither ownership nor bus registration is active. Already accepted Telegram-turn reply delivery, previews, queued attachments, and queue finalization remain session-local and may complete after polling ownership moves away.
 
 ## Reset
 

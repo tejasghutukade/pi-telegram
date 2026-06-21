@@ -71,6 +71,7 @@ test("Extension entrypoint wires domain bindings into the pi API", () => {
   assert.deepEqual([...harness.tools.keys()], [
     "telegram_attach",
     "telegram_message",
+    "telegram_help",
   ]);
   assert.deepEqual(
     [...harness.commands.keys()],
@@ -92,6 +93,7 @@ test("Extension entrypoint wires domain bindings into the pi API", () => {
       "model_select",
       "agent_start",
       "tool_execution_start",
+      "tool_execution_update",
       "tool_execution_end",
       "message_start",
       "message_update",

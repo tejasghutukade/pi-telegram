@@ -137,8 +137,15 @@ export interface TelegramSectionSettingsRow {
 // --- Runtime Port Builders ---
 
 /** @internal */
+export interface TelegramSectionTarget {
+  chatId: number;
+  threadId?: number;
+}
+
+/** @internal */
 export interface TelegramSectionRuntimeDeps {
   answerCallbackQuery: (id: string, text?: string) => Promise<void>;
+  target?: TelegramSectionTarget;
   editInteractiveMessage: (
     chatId: number,
     messageId: number,
@@ -151,6 +158,7 @@ export interface TelegramSectionRuntimeDeps {
     text: string,
     mode: "markdown" | "html" | "plain",
     replyMarkup: TelegramInlineKeyboardMarkup,
+    options?: { target?: TelegramSectionTarget },
   ) => Promise<number | undefined>;
   enqueuePrompt: (prompt: string) => Promise<void>;
   deleteMessage: (chatId: number, messageId: number) => Promise<void>;
@@ -191,6 +199,7 @@ function buildTelegramSectionContext(
           view.text,
           view.parseMode ?? "html",
           view.replyMarkup ?? { inline_keyboard: [] },
+          deps.target ? { target: deps.target } : undefined,
         )
         .then(() => {}),
     enqueuePrompt: deps.enqueuePrompt,
@@ -239,6 +248,7 @@ function buildTelegramSectionCallbackContext(
           view.text,
           view.parseMode ?? "html",
           view.replyMarkup ?? { inline_keyboard: [] },
+          deps.target ? { target: deps.target } : undefined,
         )
         .then(() => {}),
     enqueuePrompt: deps.enqueuePrompt,
@@ -298,11 +308,6 @@ export function getTelegramSectionDiagnostics(): TelegramSectionDiagnostic[] {
 }
 
 // --- Registry ---
-
-const MAIN_MENU_ROW = {
-  text: "⬆️ Main menu",
-  callback_data: "menu:back",
-} as const;
 
 const BACK_NAV_ROW = {
   text: "⬆️ Back",
@@ -506,6 +511,7 @@ export function parseTelegramSectionCallback(
 /** @internal */
 export interface TelegramSectionCallbackHandlerDeps {
   answerCallbackQuery: (id: string, text?: string) => Promise<void>;
+  target?: TelegramSectionTarget;
   editInteractiveMessage: (
     chatId: number,
     messageId: number,
@@ -518,6 +524,7 @@ export interface TelegramSectionCallbackHandlerDeps {
     text: string,
     mode: "markdown" | "html" | "plain",
     replyMarkup: TelegramInlineKeyboardMarkup,
+    options?: { target?: TelegramSectionTarget },
   ) => Promise<number | undefined>;
   enqueuePrompt: (prompt: string) => Promise<void>;
   deleteMessage: (chatId: number, messageId: number) => Promise<void>;

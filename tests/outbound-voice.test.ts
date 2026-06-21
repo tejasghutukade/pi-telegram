@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createTelegramVoiceReplySender } from "../lib/outbound-voice.ts";
+import { createTelegramThreadTarget } from "../lib/target.ts";
 import {
   clearTelegramVoiceSynthesisProviders,
   registerTelegramVoiceSynthesisProvider,
@@ -57,6 +58,39 @@ test("Outbound voice sender uploads provider opus result with reply markup and t
       "direct.opus",
     ],
   ]);
+});
+
+test("Outbound voice sender uploads voice into thread target", async () => {
+  registerTelegramVoiceSynthesisProvider(async () => "/tmp/direct.ogg", {
+    id: "thread-test",
+  });
+  const uploads: unknown[] = [];
+  const sendVoice = createTelegramVoiceReplySender({
+    execCommand: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+    sendMultipart: async (...args) => {
+      uploads.push(args);
+    },
+  });
+
+  await sendVoice(
+    {
+      chatId: -1007,
+      replyToMessageId: 2,
+      target: createTelegramThreadTarget(-1007, 42),
+    },
+    "hello",
+  );
+
+  const fields = (uploads[0] as unknown[])[1] as Record<string, string>;
+  assert.equal(fields.chat_id, "-1007");
+  assert.equal(fields.message_thread_id, "42");
+  assert.equal(
+    fields.reply_parameters,
+    JSON.stringify({
+      message_id: 2,
+      allow_sending_without_reply: true,
+    }),
+  );
 });
 
 test("Outbound voice sender records and throws when every source fails", async () => {

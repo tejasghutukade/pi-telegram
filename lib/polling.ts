@@ -357,6 +357,12 @@ function getTelegramPollingErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+export function isTelegramGetUpdatesConflictError(error: unknown): boolean {
+  return getTelegramPollingErrorMessage(error).includes(
+    "Conflict: terminated by other getUpdates request",
+  );
+}
+
 export async function runTelegramPollLoop<
   TUpdate extends TelegramUpdate,
   TContext = unknown,
@@ -385,12 +391,14 @@ export async function runTelegramPollLoop<
   const maxUpdateFailures = Math.max(1, deps.maxUpdateFailures ?? 3);
   const updateFailures = new Map<number, number>();
   let handledUpdateFailureRethrown = false;
+  let consecutiveGetUpdatesConflicts = 0;
   while (!deps.signal.aborted) {
     try {
       const updates = await deps.getUpdates(
         buildTelegramLongPollRequest(deps.config.lastUpdateId),
         deps.signal,
       );
+      consecutiveGetUpdatesConflicts = 0;
       for (const update of updates) {
         try {
           await deps.handleUpdate(update, deps.ctx);
@@ -425,6 +433,15 @@ export async function runTelegramPollLoop<
       } else {
         deps.recordRuntimeEvent?.("polling", error, { phase: "loop" });
       }
+      if (isTelegramGetUpdatesConflictError(error)) {
+        consecutiveGetUpdatesConflicts += 1;
+        await deps.sleep(
+          consecutiveGetUpdatesConflicts < 3 ? 1000 : 3000,
+          deps.signal,
+        );
+        continue;
+      }
+      consecutiveGetUpdatesConflicts = 0;
       deps.onErrorStatus(getTelegramPollingErrorMessage(error));
       await deps.sleep(3000, deps.signal);
       if (deps.signal.aborted) return;

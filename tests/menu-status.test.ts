@@ -136,6 +136,7 @@ test("Status callback routing updates target menus and guards thinking controls"
 test("Status menu open, send, and update helpers apply status mode", async () => {
   const state: any = {
     chatId: 1,
+    threadId: 42,
     messageId: 2,
     mode: "model" as const,
     page: 0,
@@ -195,4 +196,9 @@ test("Status menu open, send, and update helpers apply status mode", async () =>
   assert.equal(sentId, 123);
   assert.equal(state.mode, "status");
   assert.equal(messages.length, 2);
+  const sentMessage = messages[1] as unknown[];
+  assert.equal(sentMessage[0], "send");
+  assert.equal(sentMessage[1], 1);
+  assert.equal(sentMessage[3], "html");
+  assert.deepEqual(sentMessage[5], { target: { chatId: 1, threadId: 42 } });
 });

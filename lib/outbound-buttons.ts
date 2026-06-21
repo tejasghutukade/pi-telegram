@@ -14,6 +14,7 @@ import {
 } from "./outbound-markup.ts";
 import {
   type PendingTelegramTurn,
+  type TelegramQueueTarget,
   truncateTelegramQueueSummary,
 } from "./queue.ts";
 
@@ -48,6 +49,7 @@ export interface TelegramButtonCallbackQuery {
   data?: string;
   message?: {
     message_id?: number;
+    message_thread_id?: number;
     chat?: { id?: number };
   };
 }
@@ -180,11 +182,13 @@ export function createTelegramButtonPromptTurn(options: {
   replyToMessageId: number;
   queueOrder: number;
   action: TelegramOutboundButtonAction;
+  target?: TelegramQueueTarget;
 }): PendingTelegramTurn {
   const prompt = `[telegram] ${options.action.prompt}`;
   return {
     kind: "prompt",
     chatId: options.chatId,
+    ...(options.target ? { target: options.target } : {}),
     replyToMessageId: options.replyToMessageId,
     sourceMessageIds: [options.replyToMessageId],
     queueOrder: options.queueOrder,
