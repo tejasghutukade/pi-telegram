@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildBotProfileRemoveConfirmationReplyMarkup,
+  buildBotProfileSettingsReplyMarkup,
   buildProactivePushSettingsReplyMarkup,
   buildProactivePushSettingsText,
   buildTelegramSettingsMenuReplyMarkup,
@@ -196,5 +198,72 @@ test("Settings runtime opens menus and applies stale-message fallback toggles", 
     "answer:Voice reply mode: always",
     "time:hidden",
     "answer:Time injection: hidden",
+  ]);
+});
+
+test("Bot profile settings expose remove flow and confirmation callbacks", async () => {
+  const profiles = [
+    { botId: 111, botUsername: "work_bot" },
+    { botId: 222, botUsername: "personal_bot" },
+  ];
+  const markup = buildBotProfileSettingsReplyMarkup(profiles, 111);
+  assert.equal(
+    markup.inline_keyboard.at(-1)?.[0]?.callback_data,
+    "settings:open:bot-remove",
+  );
+
+  const calls: string[] = [];
+  const deps = {
+    isProactivePushEnabled: () => false,
+    getVoiceReplyMode: () => "manual" as const,
+    isVoiceReplyModeConfigured: () => true,
+    getTimeInjectionMode: () => "hidden" as const,
+    setProactivePushEnabled: async () => {},
+    setVoiceReplyMode: async () => {},
+    setTimeInjectionMode: async () => {},
+    getActiveBotId: () => 111,
+    getActiveBotUsername: () => "work_bot",
+    listProfiles: () => profiles,
+    switchSessionProfile: async () => {},
+    removeProfile: async (botId: number) => {
+      calls.push(`remove:${botId}`);
+    },
+    getSessionCwd: () => "/work",
+    updateSettingsMessage: async (text: string) => {
+      calls.push(`update:${text.split("\n")[0]}`);
+    },
+    answerCallbackQuery: async (_id: string, text?: string) => {
+      calls.push(`answer:${text ?? ""}`);
+    },
+  };
+
+  assert.equal(
+    await handleTelegramSettingsMenuCallbackAction(
+      "q1",
+      "settings:remove:bot:222",
+      deps,
+    ),
+    true,
+  );
+  assert.deepEqual(
+    buildBotProfileRemoveConfirmationReplyMarkup(222).inline_keyboard[0]?.map(
+      (button) => button.callback_data,
+    ),
+    ["settings:confirm-remove:bot:222", "settings:keep:bot"],
+  );
+  assert.equal(
+    await handleTelegramSettingsMenuCallbackAction(
+      "q2",
+      "settings:confirm-remove:bot:222",
+      deps,
+    ),
+    true,
+  );
+  assert.deepEqual(calls, [
+    "update:<b>Remove @personal_bot?</b>",
+    "answer:",
+    "remove:222",
+    "update:<b>🤖 Telegram bot:</b> <code>@work_bot</code>",
+    "answer:Bot profile removed. Run /telegram-setup to add one again.",
   ]);
 });

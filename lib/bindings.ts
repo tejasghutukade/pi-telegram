@@ -4,6 +4,7 @@
  * Owns pi-facing tool, command, and lifecycle hook registration for the entrypoint
  */
 
+import * as BotConnections from "./bot-connections.ts";
 import * as CommandTemplates from "./command-templates.ts";
 import * as Commands from "./commands.ts";
 import * as Config from "./config.ts";
@@ -36,10 +37,10 @@ type TelegramBridgeStatusUpdater =
 
 interface TelegramCommandsAndToolsBindingDeps {
   pi: Pi.ExtensionAPI;
-  configStore: Config.TelegramConfigStore;
+  configStore: Config.TelegramProfileConfigStore;
   setup: Setup.TelegramSetupGuard;
   activeTurnRuntime: Queue.TelegramActiveTurnStore<Queue.PendingTelegramTurn>;
-  lockedPollingRuntime: Locks.TelegramLockedPollingRuntime<Pi.ExtensionContext>;
+  lockedPollingRuntime: BotConnections.TelegramBotConnectionRuntime<Pi.ExtensionContext>;
   getStatusLines: () => string[];
   buttonActionStore: OutboundHandlers.TelegramButtonActionStore;
   sendMarkdownReply: (
@@ -91,14 +92,26 @@ export function registerTelegramCommandsAndTools({
     promptForConfig: Setup.createTelegramSetupPromptRuntime({
       getConfig: configStore.get,
       setConfig: configStore.set,
+      getSessionCwd: (ctx) => ctx.cwd,
       setupGuard: setup,
       getMe: TelegramApi.fetchTelegramBotIdentity,
-      persistConfig: configStore.persist,
+      persistConfig: async (nextConfig) => {
+        if (nextConfig.botId !== undefined) {
+          await configStore.upsertProfile(nextConfig);
+          return;
+        }
+        await configStore.persist(nextConfig);
+      },
+      bindSession: configStore.bindSession,
       startPolling: lockedPollingRuntime.start,
       updateStatus,
       recordRuntimeEvent,
     }),
     getStatusLines,
+    prepareConnect: async (ctx) => {
+      configStore.setSessionCwd(ctx.cwd);
+      await configStore.load();
+    },
     reloadConfig: configStore.load,
     hasBotToken: configStore.hasBotToken,
     startPolling: lockedPollingRuntime.start,

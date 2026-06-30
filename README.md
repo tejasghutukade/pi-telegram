@@ -107,9 +107,15 @@ Prompt-template commands are discovered from π prompt templates, mapped to Tele
 Run these inside π, not Telegram:
 
 - **`/telegram-setup`**: Configure or update the Telegram bot token.
-- **`/telegram-connect`**: Start polling Telegram updates in the current π session and acquire the singleton lock.
-- **`/telegram-disconnect`**: Stop polling in the current π session and release the singleton lock.
+- **`/telegram-connect`**: Bind this π session to its bot profile, start polling, and acquire the per-bot lock.
+- **`/telegram-disconnect`**: Stop polling in the current π session and release this session's bot lock.
 - **`/telegram-status`**: Inspect adapter status, connection, polling, execution, queue, and recent redacted runtime/API failure events.
+
+### Multiple bots across π sessions
+
+`telegram.json` stores **bot profiles** keyed by `botId`, plus **session bindings** that map each π session directory (`cwd`) to a profile. Optional top-level `defaults` can hold shared handler/voice/time settings that apply to every profile unless a profile overrides them. Run `/telegram-setup` with different bot tokens in different terminals/projects, then `/telegram-connect` in each session. Locks are per bot (`@llblab/pi-telegram:<botId>`), so two π processes can poll two different bots at once from the same `~/.pi/agent`. The same bot cannot be connected from two places at once. In one π process, multiple connected bots can stay live while you switch sessions; messages for a bot bound to another project are queued in `telegram-offline-queues.json` until that session opens. Use **Settings → Bot** in Telegram to switch or remove saved profiles without re-entering a token. Flat v1 `telegram.json` files migrate automatically on load.
+
+`PI_CODING_AGENT_DIR` remains useful for fully isolated agent trees, but is no longer required just to run different bots in different π sessions.
 
 ### Files and artifacts
 

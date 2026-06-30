@@ -123,7 +123,9 @@ Avoid repeating the extension name in the body. Color is encouraged: extension t
 
 The previous owner may use `fs.watch`, mtime polling, or an existing status/timer tick. Long-lived watchers should compare against a snapshotted `pid`/`cwd` identity rather than a live pi context object, because session replacement such as `/new` makes captured contexts stale. The important contract is graceful singleton-runtime shutdown after ownership mismatch while session-local state that does not require polling remains owned by its original instance.
 
-For `pi-telegram`, direct local/TUI delivery tools (`telegram_message` and no-active-turn `telegram_attach`) and proactive local/headless final-result push are singleton-controlled and require current `/telegram-connect` ownership. They must fail or skip delivery when the lock is inactive or active elsewhere. Already accepted Telegram-turn reply delivery, previews, queued attachments, and queue finalization remain session-local and may complete after polling ownership moves away.
+For `pi-telegram`, lock keys are per bot: `@llblab/pi-telegram:<botId>`. Different bots may poll concurrently from different π processes sharing one `~/.pi/agent`. The same bot still has one live owner at a time.
+
+Direct local/TUI delivery tools (`telegram_message` and no-active-turn `telegram_attach`) and proactive local/headless final-result push require current `/telegram-connect` ownership for **this session's bound bot**. They must fail or skip delivery when that bot's lock is inactive or active elsewhere. Already accepted Telegram-turn reply delivery, previews, queued attachments, and queue finalization remain session-local and may complete after polling ownership moves away.
 
 ## Reset
 

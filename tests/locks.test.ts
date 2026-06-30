@@ -12,6 +12,8 @@ import test from "node:test";
 import {
   createTelegramLockedPollingRuntime,
   createTelegramLockRuntime,
+  getTelegramLockKey,
+  migrateLegacyTelegramLock,
   readLocks,
   TELEGRAM_LOCK_KEY,
   writeLocks,
@@ -497,6 +499,82 @@ test("Locked polling runtime does not claim stale ownership from another cwd dur
       pid: 99,
       cwd: "/other",
     });
+  } finally {
+    rmSync(temp.dir, { recursive: true, force: true });
+  }
+});
+
+test("Per-bot lock keys let different bots poll concurrently", () => {
+  const temp = createTempLockPath();
+  try {
+    const workLock = createTelegramLockRuntime({
+      locksPath: temp.path,
+      pid: 10,
+      key: getTelegramLockKey(111),
+    });
+    const personalLock = createTelegramLockRuntime({
+      locksPath: temp.path,
+      pid: 20,
+      key: getTelegramLockKey(222),
+    });
+    assert.equal(workLock.acquire({ cwd: "/work" }).ok, true);
+    assert.equal(personalLock.acquire({ cwd: "/personal" }).ok, true);
+    assert.deepEqual(readLocks(temp.path)[getTelegramLockKey(111)], {
+      pid: 10,
+      cwd: "/work",
+    });
+    assert.deepEqual(readLocks(temp.path)[getTelegramLockKey(222)], {
+      pid: 20,
+      cwd: "/personal",
+    });
+    assert.equal(workLock.getStatusLabel(), "active here");
+    assert.equal(personalLock.getStatusLabel(), "active here");
+  } finally {
+    rmSync(temp.dir, { recursive: true, force: true });
+  }
+});
+
+test("Same bot lock still blocks a second live owner", () => {
+  const temp = createTempLockPath();
+  try {
+    writeFileSync(
+      temp.path,
+      JSON.stringify({ [getTelegramLockKey(111)]: { pid: 99, cwd: "/other" } }),
+    );
+    const lock = createTelegramLockRuntime({
+      locksPath: temp.path,
+      pid: 10,
+      key: getTelegramLockKey(111),
+      isProcessAlive: (pid) => pid === 99,
+    });
+    assert.equal(lock.acquire({ cwd: "/work" }).ok, false);
+    assert.equal(lock.getStatusLabel(), "active elsewhere (pid 99, cwd /other)");
+  } finally {
+    rmSync(temp.dir, { recursive: true, force: true });
+  }
+});
+
+test("Legacy global lock migrates to per-bot key on read", () => {
+  const temp = createTempLockPath();
+  try {
+    writeFileSync(
+      temp.path,
+      JSON.stringify({
+        [TELEGRAM_LOCK_KEY]: { pid: 10, cwd: "/career-ops" },
+      }),
+    );
+    const lock = createTelegramLockRuntime({
+      locksPath: temp.path,
+      pid: 10,
+      getKey: () => getTelegramLockKey(8782272992),
+      getLegacyMigrationBotId: () => 8782272992,
+    });
+    assert.equal(lock.getStatusLabel(), "active here");
+    assert.deepEqual(readLocks(temp.path)[getTelegramLockKey(8782272992)], {
+      pid: 10,
+      cwd: "/career-ops",
+    });
+    assert.equal(readLocks(temp.path)[TELEGRAM_LOCK_KEY], undefined);
   } finally {
     rmSync(temp.dir, { recursive: true, force: true });
   }

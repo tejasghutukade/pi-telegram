@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased: Multi-Bot Profiles
+
+- `[Config]` `telegram.json` is now a version-2 document with `profiles` keyed by `botId` and `sessionBindings` keyed by π session `cwd`; flat v1 files migrate automatically. Impact: different terminals/projects can keep different bot tokens in one `~/.pi/agent` without overwriting each other.
+- `[Locks]` Polling ownership keys are per bot (`@llblab/pi-telegram:<botId>`). Impact: two π processes can poll two different bots concurrently from the same agent directory; the same bot still has one live owner.
+- `[Polling]` Added a per-bot polling manager so one π process can run concurrent poll loops when multiple bot locks are owned. Impact: same-process multi-bot polling is supported at the transport layer; session queue/runtime state remains per π session.
+- `[Connections]` Per-bot connect/disconnect in one π process no longer stops unrelated bots when a session shuts down or disconnects. Impact: multiple connected bots can stay live while you switch π sessions.
+- `[Routing]` Inbound updates route through the bound bot profile; messages for another bound session are queued offline in `telegram-offline-queues.json` and merged when that session starts. Impact: same-process multi-bot no longer misroutes prompts to the wrong project.
+- `[Settings]` Settings → **Bot** lists saved profiles and switches the bound bot for the current session. Impact: operators can change bots without re-entering tokens.
+- `[Settings]` Settings → **Bot → Remove bot** deletes saved profiles with confirmation. Impact: operators can clean up old bots without editing `telegram.json` by hand.
+- `[Config]` Optional document-level `defaults` merge shared handler/voice/time settings into every bot profile unless overridden. Impact: multiple bots can share one handler setup without duplicating config.
+- `[Config]` Config persistence reload-merges disk state before writing so concurrent `/telegram-setup` runs in different terminals are less likely to clobber each other.
+- `[Tests]` Added regressions for profile persistence, v1 migration, per-bot locks, and the multi-poll manager.
+
 ## 0.17.5: Screenshot Refresh
 
 - `[Docs]` Refreshed the package screenshot.

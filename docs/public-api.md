@@ -70,7 +70,27 @@ See [Outbound Handlers](./outbound.md) for exact markup forms.
 
 Configuration lives in `~/.pi/agent/telegram.json` unless `PI_CODING_AGENT_DIR` changes the agent root.
 
-Stable config keys:
+On disk, config is a versioned document:
+
+```ts
+interface TelegramConfigDocument {
+  version: 2;
+  defaults?: {
+    inboundHandlers?: TelegramInboundHandlerConfig[];
+    attachmentHandlers?: TelegramInboundHandlerConfig[];
+    outboundHandlers?: TelegramOutboundHandlerConfig[];
+    proactivePush?: boolean;
+    voice?: TelegramConfig["voice"];
+    time?: TelegramConfig["time"];
+  };
+  profiles: Record<string, TelegramBotProfile>; // key = String(botId)
+  sessionBindings: Record<string, string>; // cwd -> profile key
+}
+
+type TelegramBotProfile = TelegramConfig;
+```
+
+The active π session sees one profile slice through the same stable keys:
 
 ```ts
 interface TelegramConfig {

@@ -49,8 +49,8 @@ The repository uses a **Flat Domain DAG**:
 
 - `index.ts`: composition root for live ports, session state, transport adapters, and lifecycle registration.
 - `api`: Bot API helpers, retries, uploads/downloads, temp cleanup, byte limits, chat actions, lazy token clients, and API error recording.
-- `config` / `setup`: `telegram.json`, bot token setup, first-user pairing, authorization, env fallback, atomic persistence, and live config accessors.
-- `locks` / `polling`: singleton polling ownership, takeover/restart behavior, long-poll controller state, offset persistence, and poll-loop wiring.
+- `config` / `setup`: versioned `telegram.json` with bot profiles and per-session bindings, bot token setup, first-user pairing, authorization, env fallback, atomic persistence, and live profile accessors.
+- `locks` / `polling`: per-bot polling ownership (`@llblab/pi-telegram:<botId>`), takeover/restart behavior, multi-bot poll controllers, offset persistence per profile, and poll-loop wiring.
 - `updates` / `routing`: update classification, authorization planning, callbacks, edited messages, reactions, and inbound route composition.
 - `media` / `text-groups` / `time-injection` / `turns` / `inbound`: inbound text/media/file extraction, rich-message reply-context plaintext recovery, media-group debounce, long-text coalescing, optional `[time]` context, handler execution, and prompt-turn assembly/editing.
 - `queue`: queue item contracts, lane admission/order, readiness gates, mutations, dispatch runtime, prompt/control enqueueing, and session/agent/tool lifecycle sequencing.
@@ -84,7 +84,7 @@ Mirrored domain regressions live in `/tests/*.test.ts`. Shared test fixtures sho
 
 ## Configuration And Ownership
 
-Telegram configuration lives in `~/.pi/agent/telegram.json`. Polling ownership lives separately in `~/.pi/agent/locks.json` under `@llblab/pi-telegram`.
+Telegram configuration lives in `~/.pi/agent/telegram.json` as a version-2 document with `profiles` keyed by `botId` and `sessionBindings` keyed by π session `cwd`. Polling ownership lives separately in `~/.pi/agent/locks.json` under `@llblab/pi-telegram:<botId>`.
 
 ### Setup Flow
 
@@ -98,7 +98,7 @@ Telegram configuration lives in `~/.pi/agent/telegram.json`. Polling ownership l
 
 ### Runtime Ownership
 
-- `/telegram-connect` acquires or moves singleton polling ownership before polling starts.
+- `/telegram-connect` binds the current π session `cwd` to a bot profile, acquires or moves that bot's lock, then starts polling.
 - `/telegram-disconnect` stops polling and releases ownership.
 - Session start resumes polling only when the existing lock already points at the current `pid`/`cwd`, or when a stale same-`cwd` lock can be safely replaced after process restart.
 - Pi `print`/`json` run modes stay passive: they do not start or resume Telegram polling even if a lock is present. Older Pi runtimes without `ctx.mode` keep the previous compatibility behavior.

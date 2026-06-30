@@ -20,8 +20,11 @@ import {
   createTelegramVoiceReplyModeGetter,
   createTelegramVoiceReplyModeSetter,
   getTelegramAuthorizationState,
+  mergeTelegramConfigDocumentsOnPersist,
+  migrateTelegramConfigToDocument,
   pairTelegramUserIfNeeded,
   readTelegramConfig,
+  readTelegramConfigDocument,
   setGlobalTelegramConfigRuntime,
   updateTelegramVoiceConfig,
   writeTelegramConfig,
@@ -614,4 +617,188 @@ test("Setup prompt runtime guards concurrent setup and stores successful config"
     "finish",
     "start",
   ]);
+});
+
+test("Telegram config store supports multiple bot profiles and session bindings", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-multi-bot-"));
+  const configPath = join(agentDir, "telegram.json");
+  const store = createTelegramConfigStore({ agentDir, configPath });
+
+  await store.upsertProfile({
+    botToken: "work-token",
+    botId: 111,
+    botUsername: "work_bot",
+    allowedUserId: 10,
+  });
+  store.setSessionCwd("/work");
+  await store.bindSession("/work", 111);
+
+  await store.upsertProfile({
+    botToken: "personal-token",
+    botId: 222,
+    botUsername: "personal_bot",
+    allowedUserId: 20,
+  });
+  await store.bindSession("/personal", 222);
+
+  const document = await readTelegramConfigDocument(configPath);
+  assert.equal(document.version, 2);
+  assert.deepEqual(Object.keys(document.profiles).sort(), ["111", "222"]);
+  assert.deepEqual(document.sessionBindings, {
+    "/work": "111",
+    "/personal": "222",
+  });
+
+  store.setSessionCwd("/work");
+  await store.load();
+  assert.equal(store.get().botUsername, "work_bot");
+  assert.equal(store.getActiveBotId(), 111);
+
+  store.setSessionCwd("/personal");
+  await store.load();
+  assert.equal(store.get().botUsername, "personal_bot");
+  assert.equal(store.getActiveBotId(), 222);
+  assert.deepEqual(store.listProfiles(), [
+    { botId: 111, botUsername: "work_bot", allowedUserId: 10 },
+    { botId: 222, botUsername: "personal_bot", allowedUserId: 20 },
+  ]);
+});
+
+test("Telegram config migrates flat v1 config into profiles on load", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-migrate-"));
+  const configPath = join(agentDir, "telegram.json");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      botToken: "legacy-token",
+      botId: 99,
+      botUsername: "legacy_bot",
+      allowedUserId: 5,
+    }),
+    "utf8",
+  );
+  const store = createTelegramConfigStore({
+    agentDir,
+    configPath,
+  });
+  store.setSessionCwd("/legacy");
+  await store.load();
+  assert.equal(store.get().botUsername, "legacy_bot");
+  const document = store.getDocument();
+  assert.deepEqual(document.profiles["99"]?.botUsername, "legacy_bot");
+  assert.equal(document.sessionBindings["/legacy"], "99");
+});
+
+test("Telegram config resolves shared defaults into active profile", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-defaults-"));
+  const configPath = join(agentDir, "telegram.json");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      version: 2,
+      defaults: {
+        voice: { replyMode: "mirror" },
+        inboundHandlers: [{ type: "voice", command: "stt" }],
+      },
+      profiles: {
+        "111": {
+          botToken: "token-a",
+          botId: 111,
+          botUsername: "work_bot",
+        },
+      },
+      sessionBindings: { "/work": "111" },
+    }),
+    "utf8",
+  );
+  const store = createTelegramConfigStore({ agentDir, configPath });
+  store.setSessionCwd("/work");
+  await store.load();
+  assert.equal(store.get().voice?.replyMode, "mirror");
+  assert.deepEqual(store.get().inboundHandlers, [
+    { type: "voice", command: "stt" },
+  ]);
+  await store.persist({
+    ...store.get(),
+    voice: { replyMode: "always" },
+  });
+  const document = await readTelegramConfigDocument(configPath, {
+    sessionCwd: "/work",
+  });
+  assert.deepEqual(document.profiles["111"]?.voice, { replyMode: "always" });
+  assert.deepEqual(document.defaults?.voice, { replyMode: "mirror" });
+});
+
+test("Telegram config merge on persist keeps concurrent profile writes", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-merge-"));
+  const configPath = join(agentDir, "telegram.json");
+  const storeA = createTelegramConfigStore({ agentDir, configPath });
+  const storeB = createTelegramConfigStore({ agentDir, configPath });
+  await storeA.upsertProfile({
+    botToken: "token-a",
+    botId: 111,
+    botUsername: "work_bot",
+  });
+  await storeA.bindSession("/work", 111);
+  await storeB.load();
+  await storeB.upsertProfile({
+    botToken: "token-b",
+    botId: 222,
+    botUsername: "personal_bot",
+  });
+  await storeB.bindSession("/personal", 222);
+  const document = await readTelegramConfigDocument(configPath);
+  assert.deepEqual(Object.keys(document.profiles).sort(), ["111", "222"]);
+  assert.deepEqual(document.sessionBindings, {
+    "/work": "111",
+    "/personal": "222",
+  });
+});
+
+test("Telegram config store removeProfile clears bindings", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-remove-"));
+  const configPath = join(agentDir, "telegram.json");
+  const store = createTelegramConfigStore({ agentDir, configPath });
+  await store.upsertProfile({
+    botToken: "token-a",
+    botId: 111,
+    botUsername: "work_bot",
+  });
+  await store.bindSession("/work", 111);
+  await store.removeProfile(111);
+  const document = await readTelegramConfigDocument(configPath);
+  assert.equal(document.profiles["111"], undefined);
+  assert.equal(document.sessionBindings["/work"], undefined);
+});
+
+test("mergeTelegramConfigDocumentsOnPersist preserves unrelated disk profiles", () => {
+  const baseline = migrateTelegramConfigToDocument({
+    version: 2,
+    profiles: {
+      "111": { botId: 111, botUsername: "work_bot" },
+    },
+    sessionBindings: { "/work": "111" },
+  });
+  const disk = migrateTelegramConfigToDocument({
+    version: 2,
+    profiles: {
+      "111": { botId: 111, botUsername: "work_bot" },
+      "222": { botId: 222, botUsername: "personal_bot" },
+    },
+    sessionBindings: {
+      "/work": "111",
+      "/personal": "222",
+    },
+  });
+  const current = migrateTelegramConfigToDocument({
+    version: 2,
+    profiles: {
+      "111": { botId: 111, botUsername: "work_bot", lastUpdateId: 9 },
+    },
+    sessionBindings: { "/work": "111" },
+  });
+  const merged = mergeTelegramConfigDocumentsOnPersist(disk, current, baseline);
+  assert.equal(merged.profiles["111"]?.lastUpdateId, 9);
+  assert.equal(merged.profiles["222"]?.botUsername, "personal_bot");
+  assert.equal(merged.sessionBindings["/personal"], "222");
 });

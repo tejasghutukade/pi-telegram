@@ -6,19 +6,18 @@
 
 import * as Bindings from "./lib/bindings.ts";
 import * as CommandTemplates from "./lib/command-templates.ts";
-import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
 import * as Inbound from "./lib/inbound.ts";
 import * as Lifecycle from "./lib/lifecycle.ts";
-import * as Locks from "./lib/locks.ts";
 import * as Media from "./lib/media.ts";
 import * as MenuQueue from "./lib/menu-queue.ts";
 import * as MenuSettings from "./lib/menu-settings.ts";
 import * as Menu from "./lib/menu.ts";
 import * as Model from "./lib/model.ts";
+import * as MultiBotRuntime from "./lib/multi-bot-runtime.ts";
+import * as OfflineQueue from "./lib/offline-queue.ts";
 import * as Outbound from "./lib/outbound.ts";
 import * as Pi from "./lib/pi.ts";
-import * as Polling from "./lib/polling.ts";
 import * as Preview from "./lib/preview.ts";
 import * as PromptTemplates from "./lib/prompt-templates.ts";
 import * as Queue from "./lib/queue.ts";
@@ -30,7 +29,6 @@ import * as Status from "./lib/status.ts";
 import * as TelegramApi from "./lib/telegram-api.ts";
 import * as TextGroups from "./lib/text-groups.ts";
 import * as TimeInjection from "./lib/time-injection.ts";
-import * as Updates from "./lib/updates.ts";
 import * as Voice from "./lib/voice.ts";
 
 type ActivePiModel = NonNullable<Pi.ExtensionContext["model"]>;
@@ -59,16 +57,11 @@ export default function (pi: Pi.ExtensionAPI) {
   configStoreForRedaction = configStore;
   Config.bindGlobalTelegramConfigRuntime(configStore);
   const configControls = Config.createTelegramConfigControls(configStore);
-  const lockRuntime = Locks.createTelegramLockRuntime<Pi.ExtensionContext>();
-  const lockOwnershipGuard =
-    Locks.createTelegramLockOwnershipGuard(lockRuntime);
   const telegramSessionContextStore =
     Lifecycle.createTelegramSessionContextStore<Pi.ExtensionContext>();
-  const ownsTelegramDirectDelivery =
-    Locks.createTelegramDirectDeliveryOwnershipChecker({
-      lock: lockRuntime,
-      contextStore: telegramSessionContextStore,
-    });
+  const getBotIdForCwd =
+    MultiBotRuntime.createTelegramBotIdForCwdResolver(configStore);
+  const offlineQueueStore = OfflineQueue.createTelegramOfflineQueueStore();
   const activeTurnRuntime = Queue.createTelegramActiveTurnStore();
   const proactivePushChatIdGetter =
     Config.createTelegramProactivePushChatIdGetter({
@@ -107,15 +100,16 @@ export default function (pi: Pi.ExtensionAPI) {
       delayMs: 50,
       recordRuntimeEvent,
     });
-  const pollingControllerState = Polling.createTelegramPollingControllerState();
+  const multiBotStatusBridges =
+    MultiBotRuntime.createTelegramMultiBotStatusBridges();
+  const pollingActivity = multiBotStatusBridges.pollingActivity;
+  const lockStatusBridge = multiBotStatusBridges.lockStatusBridge;
   const statusRuntime = Status.createTelegramBridgeStatusRuntime<
     Pi.ExtensionContext,
     Queue.TelegramQueueItem<Pi.ExtensionContext>
   >({
       getConfig: configStore.get,
-      isPollingActive: Polling.createTelegramPollingActivityReader(
-        pollingControllerState,
-      ),
+      isPollingActive: pollingActivity.read,
       getActiveSourceMessageIds: activeTurnRuntime.getSourceMessageIds,
       hasActiveTurn: activeTurnRuntime.has,
       hasDispatchPending: lifecycle.hasDispatchPending,
@@ -125,7 +119,7 @@ export default function (pi: Pi.ExtensionAPI) {
       getQueuedItems: telegramQueueStore.getQueuedItems,
       formatQueuedStatus: Queue.formatQueuedTelegramItemsStatus,
       getRecentRuntimeEvents: runtimeEvents.getEvents,
-      getRuntimeLockState: lockRuntime.getStatusLabel,
+      getRuntimeLockState: lockStatusBridge.read,
     });
   const { getStatusLines, updateStatus } = statusRuntime;
   const inboundHandlerRuntime = Inbound.createTelegramInboundHandlerRuntime({
@@ -309,6 +303,8 @@ export default function (pi: Pi.ExtensionAPI) {
     updateStatusMessage: menuActions.updateStatusMessage,
     updateStatus,
   });
+  const botProfileSettingsPorts =
+    MenuSettings.createTelegramBotProfileSettingsPorts(configStore);
   const settingsMenuRuntime = MenuSettings.createTelegramSettingsMenuRuntime(
     {
       getModelMenuState: getQueueMenuState,
@@ -317,6 +313,9 @@ export default function (pi: Pi.ExtensionAPI) {
       editInteractiveMessage,
       sendInteractiveMessage,
       answerCallbackQuery,
+      ...botProfileSettingsPorts,
+      getSessionCwdFromContext: Pi.getExtensionContextCwd,
+      getSessionCwd: configStore.getSessionCwd.bind(configStore),
       ...configControls,
     },
     sectionRegistry,
@@ -373,33 +372,28 @@ export default function (pi: Pi.ExtensionAPI) {
     compact,
     recordRuntimeEvent,
   });
-  const pollingRuntime = Polling.createTelegramPollingControllerRuntime({
-    state: pollingControllerState,
-    getConfig: configStore.get,
-    hasBotToken: configStore.hasBotToken,
-    deleteWebhook,
-    getUpdates,
-    persistConfig: configStore.persist,
-    handleUpdate: Updates.createTelegramUpdateHandle({
-      defaultHandle: inboundRouteRuntime.handleUpdate,
-    }),
+  const multiBotRuntime = MultiBotRuntime.createTelegramMultiBotBridgeRuntime({
+    configStore,
+    getBotIdForCwd,
+    offlineQueue: offlineQueueStore,
+    inboundHandleUpdate: inboundRouteRuntime.handleUpdate,
+    getContextCwd: Pi.getExtensionContextCwd,
+    canStartPolling: Pi.canStartPollingInExtensionContext,
+    formatStartBlockedMessage: Pi.formatPollingStartBlockedByRunMode,
+    contextStore: telegramSessionContextStore,
     stopTypingLoop: typing.stop,
     updateStatus,
     recordRuntimeEvent,
+    statusBridges: multiBotStatusBridges,
   });
-  const lockedPollingRuntime = Locks.createTelegramLockedPollingRuntime({
-    lock: lockRuntime,
-    hasBotToken: configStore.hasBotToken,
-    canStartPolling: Pi.canStartPollingInExtensionContext,
-    formatStartBlockedMessage: Pi.formatPollingStartBlockedByRunMode,
-    startPolling: pollingRuntime.start,
-    stopPolling: pollingRuntime.stop,
-    updateStatus,
-    recordRuntimeEvent,
-  });
+  const botConnectionRegistry = multiBotRuntime.botConnectionRegistry;
+  const botConnectionRuntime = multiBotRuntime.botConnectionRuntime;
+  const lockOwnershipGuard = multiBotRuntime.lockOwnershipGuard;
+  const ownsTelegramDirectDelivery =
+    multiBotRuntime.ownsTelegramDirectDelivery;
   const queueSessionLifecycle = Queue.createTelegramSessionLifecycleRuntime({
     getCurrentModel: getContextModel,
-    loadConfig: configStore.load,
+    loadConfig: Config.createTelegramSessionConfigLoader(configStore),
     setQueuedItems: telegramQueueStore.setQueuedItems,
     setCurrentModel: currentModelRuntime.set,
     setPendingModelSwitch: pendingModelSwitchStore.set,
@@ -418,19 +412,36 @@ export default function (pi: Pi.ExtensionAPI) {
     clearPreview: previewRuntime.clear,
     clearActiveTurn: activeTurnRuntime.clear,
     clearAbort: abort.clearHandler,
-    stopPolling: lockedPollingRuntime.suspend,
+    stopPolling: MultiBotRuntime.createTelegramSessionStopPollingForCwd(
+      configStore,
+      botConnectionRegistry,
+    ),
     recordRuntimeEvent,
   });
-  const baseSessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
+  const contextTracker = Lifecycle.createTelegramSessionContextTracker(
+    telegramSessionContextStore,
+  );
+  const sessionLifecycleWithContext = Lifecycle.appendTelegramLifecycleHooks(
+    contextTracker,
     queueSessionLifecycle,
+  );
+  const mergeOfflineQueueForSession =
+    MultiBotRuntime.createTelegramOfflineQueueSessionMerger(
+      offlineQueueStore,
+      telegramQueueStore,
+      dispatchNextQueuedTelegramTurn,
+      recordRuntimeEvent,
+    );
+  const baseSessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
+    sessionLifecycleWithContext,
     {
-      onSessionStart: lockedPollingRuntime.onSessionStart,
+      onSessionStart: MultiBotRuntime.createTelegramMultiBotSessionStartHook(
+        botConnectionRegistry,
+        mergeOfflineQueueForSession,
+      ),
     },
   );
-  const sessionLifecycleRuntime = Lifecycle.appendTelegramLifecycleHooks(
-    baseSessionLifecycleRuntime,
-    Lifecycle.createTelegramSessionContextTracker(telegramSessionContextStore),
-  );
+  const sessionLifecycleRuntime = baseSessionLifecycleRuntime;
 
   // --- Extension API Bindings ---
 
@@ -439,7 +450,7 @@ export default function (pi: Pi.ExtensionAPI) {
     configStore,
     setup,
     activeTurnRuntime,
-    lockedPollingRuntime,
+    lockedPollingRuntime: botConnectionRuntime,
     getStatusLines,
     buttonActionStore,
     sendMarkdownReply,

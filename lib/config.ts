@@ -59,10 +59,55 @@ export interface TelegramConfig {
   proactivePush?: boolean;
   voice?: {
     replyMode?: "manual" | "mirror" | "always";
-    /** Whether to attach the provider's transcriptText as caption on voice messages */
     sendTranscript?: boolean;
   };
   time?: TelegramTimeConfig;
+}
+
+export type TelegramBotProfile = TelegramConfig;
+
+export interface TelegramConfigDefaults {
+  inboundHandlers?: TelegramInboundHandlerConfig[];
+  attachmentHandlers?: TelegramInboundHandlerConfig[];
+  outboundHandlers?: TelegramOutboundHandlerConfig[];
+  proactivePush?: boolean;
+  voice?: TelegramConfig["voice"];
+  time?: TelegramTimeConfig;
+}
+
+export const TELEGRAM_CONFIG_VERSION = 2;
+
+export interface TelegramConfigDocument {
+  version: typeof TELEGRAM_CONFIG_VERSION;
+  defaults?: TelegramConfigDefaults;
+  profiles: Record<string, TelegramBotProfile>;
+  sessionBindings: Record<string, string>;
+}
+
+export interface TelegramBotProfileSummary {
+  botId: number;
+  botUsername?: string;
+  allowedUserId?: number;
+}
+
+export interface TelegramProfileConfigStore extends TelegramConfigStore {
+  setSessionCwd: (cwd: string) => void;
+  getSessionCwd: () => string | undefined;
+  getActiveBotId: () => number | undefined;
+  getDocument: () => TelegramConfigDocument;
+  bindSession: (cwd: string, botId: number) => Promise<void>;
+  upsertProfile: (profile: TelegramBotProfile) => Promise<void>;
+  switchSessionProfile: (cwd: string, botId: number) => Promise<void>;
+  removeProfile: (botId: number) => Promise<void>;
+  mutateProfile: (
+    botId: number,
+    mutate: (profile: TelegramBotProfile) => void,
+  ) => Promise<void>;
+  getProfile: (botId: number) => TelegramBotProfile | undefined;
+  listProfiles: () => TelegramBotProfileSummary[];
+  findCwdForBot: (botId: number) => string | undefined;
+  withBotProfile: <T>(botId: number, run: () => T | Promise<T>) => Promise<T>;
+  hasBotTokenForBot: (botId: number) => boolean;
 }
 
 export interface TelegramConfigStore {
@@ -136,6 +181,228 @@ export function bindGlobalTelegramConfigRuntime(
   });
 }
 
+function createEmptyTelegramConfigDocument(): TelegramConfigDocument {
+  return {
+    version: TELEGRAM_CONFIG_VERSION,
+    profiles: {},
+    sessionBindings: {},
+  };
+}
+
+function mergeProfileWithDefaults(
+  defaults: TelegramConfigDefaults | undefined,
+  profile: TelegramBotProfile,
+): TelegramBotProfile {
+  if (!defaults) return { ...profile };
+  return {
+    ...defaults,
+    ...profile,
+    inboundHandlers: profile.inboundHandlers ?? defaults.inboundHandlers,
+    attachmentHandlers:
+      profile.attachmentHandlers ?? defaults.attachmentHandlers,
+    outboundHandlers: profile.outboundHandlers ?? defaults.outboundHandlers,
+    proactivePush: profile.proactivePush ?? defaults.proactivePush,
+    voice:
+      defaults.voice || profile.voice
+        ? { ...defaults.voice, ...profile.voice }
+        : undefined,
+    time:
+      defaults.time || profile.time
+        ? { ...defaults.time, ...profile.time }
+        : undefined,
+  };
+}
+
+function cloneTelegramConfigDocument(
+  document: TelegramConfigDocument,
+): TelegramConfigDocument {
+  return JSON.parse(JSON.stringify(document)) as TelegramConfigDocument;
+}
+
+export function mergeTelegramConfigDocumentsOnPersist(
+  disk: TelegramConfigDocument,
+  current: TelegramConfigDocument,
+  baseline: TelegramConfigDocument | undefined,
+): TelegramConfigDocument {
+  const merged = cloneTelegramConfigDocument(disk);
+  if (!baseline) {
+    merged.defaults = current.defaults ? { ...current.defaults } : disk.defaults;
+    merged.profiles = { ...disk.profiles, ...current.profiles };
+    merged.sessionBindings = {
+      ...disk.sessionBindings,
+      ...current.sessionBindings,
+    };
+    return merged;
+  }
+  if (
+    JSON.stringify(current.defaults ?? {}) !==
+    JSON.stringify(baseline.defaults ?? {})
+  ) {
+    merged.defaults = { ...disk.defaults, ...current.defaults };
+  }
+  for (const [key, profile] of Object.entries(current.profiles)) {
+    if (
+      JSON.stringify(baseline.profiles[key]) !== JSON.stringify(profile)
+    ) {
+      merged.profiles[key] = { ...profile };
+    }
+  }
+  for (const key of Object.keys(baseline.profiles)) {
+    if (!(key in current.profiles)) delete merged.profiles[key];
+  }
+  for (const [cwd, boundKey] of Object.entries(current.sessionBindings)) {
+    if (baseline.sessionBindings[cwd] !== boundKey) {
+      merged.sessionBindings[cwd] = boundKey;
+    }
+  }
+  for (const cwd of Object.keys(baseline.sessionBindings)) {
+    if (!(cwd in current.sessionBindings)) delete merged.sessionBindings[cwd];
+  }
+  return merged;
+}
+
+export function botIdToProfileKey(botId: number): string {
+  return String(botId);
+}
+
+function isTelegramConfigDocumentV2(
+  value: unknown,
+): value is TelegramConfigDocument {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as TelegramConfigDocument).version === TELEGRAM_CONFIG_VERSION &&
+    typeof (value as TelegramConfigDocument).profiles === "object" &&
+    (value as TelegramConfigDocument).profiles !== null &&
+    !Array.isArray((value as TelegramConfigDocument).profiles)
+  );
+}
+
+function extractTelegramBotProfile(config: TelegramConfig): TelegramBotProfile {
+  return { ...config };
+}
+
+export function migrateTelegramConfigToDocument(
+  raw: TelegramConfig | TelegramConfigDocument,
+  cwd?: string,
+): TelegramConfigDocument {
+  if (isTelegramConfigDocumentV2(raw)) {
+    return {
+      version: TELEGRAM_CONFIG_VERSION,
+      defaults: raw.defaults ? { ...raw.defaults } : undefined,
+      profiles: { ...raw.profiles },
+      sessionBindings: { ...raw.sessionBindings },
+    };
+  }
+  const flat = raw as TelegramConfig;
+  const document = createEmptyTelegramConfigDocument();
+  if (!flat.botToken && flat.botId === undefined) return document;
+  const botId = flat.botId;
+  if (botId === undefined) {
+    document.profiles.__legacy__ = extractTelegramBotProfile(flat);
+    if (cwd) document.sessionBindings[cwd] = "__legacy__";
+    return document;
+  }
+  const key = botIdToProfileKey(botId);
+  document.profiles[key] = extractTelegramBotProfile(flat);
+  if (cwd) document.sessionBindings[cwd] = key;
+  return document;
+}
+
+function resolveActiveProfileKey(
+  document: TelegramConfigDocument,
+  sessionCwd?: string,
+): string | undefined {
+  if (sessionCwd) return document.sessionBindings[sessionCwd];
+  const profileKeys = Object.keys(document.profiles);
+  if (profileKeys.length === 1) return profileKeys[0];
+  return undefined;
+}
+
+function resolveActiveProfile(
+  document: TelegramConfigDocument,
+  sessionCwd?: string,
+): TelegramBotProfile {
+  const key = resolveActiveProfileKey(document, sessionCwd);
+  if (!key) return mergeProfileWithDefaults(document.defaults, {});
+  return mergeProfileWithDefaults(
+    document.defaults,
+    document.profiles[key] ?? {},
+  );
+}
+
+function stripSharedDefaultsFromProfile(
+  resolved: TelegramBotProfile,
+  defaults: TelegramConfigDefaults | undefined,
+): TelegramBotProfile {
+  const baseline = mergeProfileWithDefaults(defaults, {});
+  const stored: TelegramBotProfile = {};
+  const identityKeys = [
+    "botToken",
+    "botUsername",
+    "botId",
+    "allowedUserId",
+    "lastUpdateId",
+  ] as const;
+  for (const key of identityKeys) {
+    if (resolved[key] !== undefined) stored[key] = resolved[key];
+  }
+  const sharedKeys = [
+    "inboundHandlers",
+    "attachmentHandlers",
+    "outboundHandlers",
+    "proactivePush",
+    "voice",
+    "time",
+  ] as const;
+  for (const key of sharedKeys) {
+    if (resolved[key] === undefined) continue;
+    if (JSON.stringify(resolved[key]) !== JSON.stringify(baseline[key])) {
+      stored[key] = resolved[key];
+    }
+  }
+  return stored;
+}
+
+function writeActiveProfileToDocument(
+  document: TelegramConfigDocument,
+  sessionCwd: string | undefined,
+  profile: TelegramBotProfile,
+): TelegramConfigDocument {
+  let key = resolveActiveProfileKey(document, sessionCwd);
+  if (!key) {
+    if (profile.botId !== undefined) key = botIdToProfileKey(profile.botId);
+    else if (profile.botToken) key = "__legacy__";
+    else return document;
+    if (sessionCwd) document.sessionBindings[sessionCwd] = key;
+  }
+  document.profiles[key] = stripSharedDefaultsFromProfile(
+    profile,
+    document.defaults,
+  );
+  return document;
+}
+
+export async function readTelegramConfigDocument(
+  configPath: string,
+  options: {
+    onInvalidConfig?: (recovery: TelegramInvalidConfigRecovery) => void;
+    sessionCwd?: string;
+  } = {},
+): Promise<TelegramConfigDocument> {
+  if (!existsSync(configPath)) return createEmptyTelegramConfigDocument();
+  const content = await readFile(configPath, "utf8");
+  try {
+    const parsed = JSON.parse(content) as TelegramConfig | TelegramConfigDocument;
+    return migrateTelegramConfigToDocument(parsed, options.sessionCwd);
+  } catch (error) {
+    const recoveryPath = getInvalidTelegramConfigRecoveryPath(configPath);
+    await rename(configPath, recoveryPath);
+    options.onInvalidConfig?.({ configPath, recoveryPath, error });
+    return createEmptyTelegramConfigDocument();
+  }
+}
+
 function getInvalidTelegramConfigRecoveryPath(configPath: string): string {
   return `${configPath}.invalid-${process.pid}-${Date.now()}`;
 }
@@ -144,28 +411,27 @@ export async function readTelegramConfig(
   configPath: string,
   options: {
     onInvalidConfig?: (recovery: TelegramInvalidConfigRecovery) => void;
+    sessionCwd?: string;
   } = {},
 ): Promise<TelegramConfig> {
-  if (!existsSync(configPath)) return {};
-  const content = await readFile(configPath, "utf8");
-  try {
-    return JSON.parse(content) as TelegramConfig;
-  } catch (error) {
-    const recoveryPath = getInvalidTelegramConfigRecoveryPath(configPath);
-    await rename(configPath, recoveryPath);
-    options.onInvalidConfig?.({ configPath, recoveryPath, error });
-    return {};
-  }
+  const document = await readTelegramConfigDocument(configPath, options);
+  return resolveActiveProfile(document, options.sessionCwd);
 }
 
-export async function writeTelegramConfig(
+export async function writeTelegramConfigDocument(
   agentDir: string,
   configPath: string,
-  config: TelegramConfig,
+  document: TelegramConfigDocument,
 ): Promise<void> {
   await mkdir(agentDir, { recursive: true });
   const tempConfigPath = `${configPath}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tempConfigPath, JSON.stringify(config, null, "\t") + "\n", {
+  const payload: TelegramConfigDocument = {
+    version: TELEGRAM_CONFIG_VERSION,
+    ...(document.defaults ? { defaults: document.defaults } : {}),
+    profiles: document.profiles,
+    sessionBindings: document.sessionBindings,
+  };
+  await writeFile(tempConfigPath, JSON.stringify(payload, null, "\t") + "\n", {
     encoding: "utf8",
     mode: 0o600,
   });
@@ -174,19 +440,61 @@ export async function writeTelegramConfig(
   await chmod(configPath, 0o600);
 }
 
+export async function writeTelegramConfig(
+  agentDir: string,
+  configPath: string,
+  config: TelegramConfig,
+): Promise<void> {
+  const document = migrateTelegramConfigToDocument(config);
+  if (config.botId !== undefined) {
+    document.profiles[botIdToProfileKey(config.botId)] =
+      extractTelegramBotProfile(config);
+  } else if (Object.keys(config).length > 0) {
+    document.profiles.__legacy__ = extractTelegramBotProfile(config);
+  }
+  await writeTelegramConfigDocument(agentDir, configPath, document);
+}
+
 export function createTelegramConfigStore(
   options: TelegramConfigStoreOptions = {},
-): TelegramConfigStore {
+): TelegramProfileConfigStore {
+  let document = createEmptyTelegramConfigDocument();
+  let loadedDocument: TelegramConfigDocument | undefined;
   let config: TelegramConfig = options.initialConfig ?? {};
+  let sessionCwd: string | undefined;
   const agentDir = options.agentDir ?? getAgentDir();
   const configPath = options.configPath ?? getConfigPath();
+
+  const syncConfigFromDocument = () => {
+    config = resolveActiveProfile(document, sessionCwd);
+  };
+
+  const persistDocument = async () => {
+    writeActiveProfileToDocument(document, sessionCwd, config);
+    let toWrite = document;
+    if (existsSync(configPath)) {
+      const disk = await readTelegramConfigDocument(configPath, { sessionCwd });
+      toWrite = mergeTelegramConfigDocumentsOnPersist(
+        disk,
+        document,
+        loadedDocument,
+      );
+    }
+    await writeTelegramConfigDocument(agentDir, configPath, toWrite);
+    document = toWrite;
+    loadedDocument = cloneTelegramConfigDocument(toWrite);
+    syncConfigFromDocument();
+  };
+
   return {
     get: () => config,
     set: (nextConfig) => {
       config = nextConfig;
+      writeActiveProfileToDocument(document, sessionCwd, config);
     },
     update: (mutate) => {
       mutate(config);
+      writeActiveProfileToDocument(document, sessionCwd, config);
     },
     getBotToken: () => config.botToken,
     hasBotToken: () => !!config.botToken,
@@ -199,9 +507,23 @@ export function createTelegramConfigStore(
     getOutboundHandlers: () => config.outboundHandlers,
     setAllowedUserId: (userId) => {
       config.allowedUserId = userId;
+      writeActiveProfileToDocument(document, sessionCwd, config);
     },
     load: async () => {
-      config = await readTelegramConfig(configPath, {
+      let shouldPersistMigration = false;
+      if (existsSync(configPath)) {
+        try {
+          const parsed = JSON.parse(await readFile(configPath, "utf8")) as
+            | TelegramConfig
+            | TelegramConfigDocument;
+          shouldPersistMigration =
+            !isTelegramConfigDocumentV2(parsed) && !!sessionCwd;
+        } catch {
+          shouldPersistMigration = false;
+        }
+      }
+      document = await readTelegramConfigDocument(configPath, {
+        sessionCwd,
         onInvalidConfig: (recovery) => {
           options.recordRuntimeEvent?.("config", recovery.error, {
             phase: "load",
@@ -210,10 +532,118 @@ export function createTelegramConfigStore(
           });
         },
       });
+      syncConfigFromDocument();
+      loadedDocument = cloneTelegramConfigDocument(document);
+      if (shouldPersistMigration) await persistDocument();
     },
     persist: async (nextConfig = config) => {
-      await writeTelegramConfig(agentDir, configPath, nextConfig);
+      config = nextConfig;
+      await persistDocument();
     },
+    setSessionCwd: (cwd) => {
+      sessionCwd = cwd;
+      syncConfigFromDocument();
+    },
+    getSessionCwd: () => sessionCwd,
+    getActiveBotId: () => config.botId,
+    getDocument: () => ({
+      version: TELEGRAM_CONFIG_VERSION,
+      defaults: document.defaults ? { ...document.defaults } : undefined,
+      profiles: { ...document.profiles },
+      sessionBindings: { ...document.sessionBindings },
+    }),
+    bindSession: async (cwd, botId) => {
+      sessionCwd = cwd;
+      document.sessionBindings[cwd] = botIdToProfileKey(botId);
+      syncConfigFromDocument();
+      await persistDocument();
+    },
+    upsertProfile: async (profile) => {
+      if (profile.botId === undefined) return;
+      const key = botIdToProfileKey(profile.botId);
+      document.profiles[key] = { ...profile };
+      if (resolveActiveProfileKey(document, sessionCwd) === key) {
+        config = { ...profile };
+      }
+      await persistDocument();
+    },
+    switchSessionProfile: async (cwd, botId) => {
+      const key = botIdToProfileKey(botId);
+      if (!document.profiles[key]) {
+        throw new Error(`Telegram bot profile ${botId} is not configured.`);
+      }
+      sessionCwd = cwd;
+      document.sessionBindings[cwd] = key;
+      syncConfigFromDocument();
+      await persistDocument();
+    },
+    removeProfile: async (botId) => {
+      const key = botIdToProfileKey(botId);
+      delete document.profiles[key];
+      for (const [cwd, boundKey] of Object.entries(document.sessionBindings)) {
+        if (boundKey === key) delete document.sessionBindings[cwd];
+      }
+      syncConfigFromDocument();
+      await persistDocument();
+    },
+    mutateProfile: async (botId, mutate) => {
+      const key = botIdToProfileKey(botId);
+      const profile = { ...(document.profiles[key] ?? {}) };
+      mutate(profile);
+      document.profiles[key] = profile;
+      if (config.botId === botId) config = { ...profile };
+      await persistDocument();
+    },
+    getProfile: (botId) => {
+      const profile = document.profiles[botIdToProfileKey(botId)];
+      return profile ? { ...profile } : undefined;
+    },
+    listProfiles: () =>
+      Object.values(document.profiles)
+        .filter((profile) => profile.botId !== undefined)
+        .map((profile) => ({
+          botId: profile.botId!,
+          botUsername: profile.botUsername,
+          allowedUserId: profile.allowedUserId,
+        })),
+    findCwdForBot: (botId) => {
+      const key = botIdToProfileKey(botId);
+      for (const [cwd, boundKey] of Object.entries(document.sessionBindings)) {
+        if (boundKey === key) return cwd;
+      }
+      return undefined;
+    },
+    withBotProfile: async (botId, run) => {
+      const prevCwd = sessionCwd;
+      const boundCwd = (() => {
+        const key = botIdToProfileKey(botId);
+        for (const [cwd, boundKey] of Object.entries(document.sessionBindings)) {
+          if (boundKey === key) return cwd;
+        }
+        return undefined;
+      })();
+      if (boundCwd) sessionCwd = boundCwd;
+      const profile = document.profiles[botIdToProfileKey(botId)];
+      if (profile) {
+        config = mergeProfileWithDefaults(document.defaults, profile);
+      }
+      try {
+        return await run();
+      } finally {
+        sessionCwd = prevCwd;
+        syncConfigFromDocument();
+      }
+    },
+    hasBotTokenForBot: (botId) => !!document.profiles[botIdToProfileKey(botId)]?.botToken,
+  };
+}
+
+export function createTelegramSessionConfigLoader(
+  store: Pick<TelegramProfileConfigStore, "setSessionCwd" | "load">,
+): (ctx: { cwd: string }) => Promise<void> {
+  return async function loadTelegramSessionConfig(ctx) {
+    store.setSessionCwd(ctx.cwd);
+    await store.load();
   };
 }
 

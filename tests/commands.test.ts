@@ -225,6 +225,9 @@ test("Command helpers register pi setup and status commands", async () => {
       events.push("setup");
     },
     getStatusLines: () => ["bot: @demo", "polling: stopped"],
+    prepareConnect: async () => {
+      events.push("reload");
+    },
     reloadConfig: async () => {
       events.push("reload");
     },
@@ -261,6 +264,9 @@ test("Command helpers register pi connect and disconnect commands", async () => 
       events.push("setup");
     },
     getStatusLines: () => [],
+    prepareConnect: async () => {
+      events.push("reload");
+    },
     reloadConfig: async () => {
       events.push("reload");
     },
@@ -306,6 +312,9 @@ test("Command helpers move pi polling ownership after confirmation", async () =>
   registerTelegramBridgeCommands(harness.api, {
     promptForConfig: async () => undefined,
     getStatusLines: () => [],
+    prepareConnect: async () => {
+      events.push("reload");
+    },
     reloadConfig: async () => {
       events.push("reload");
     },
