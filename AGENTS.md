@@ -117,6 +117,7 @@ The core product loop is mobile continuation: start or supervise work in the ter
 The canonical detailed ownership map lives in [`docs/architecture.md`](./docs/architecture.md). Keep this section as a compact agent-facing index, not a second copy of the full map.
 
 - Scheduling and lifecycle: `queue`, `runtime`, `lifecycle`, `locks`
+- Multi-bot transport and routing: `polling-manager`, `bot-connections`, `multi-bot-runtime`, `session-router`, `offline-queue`, `offline-queue-lock`
 - Telegram transport and inbound flow: `api`, `polling`, `updates`, `routing`, `media`, `turns`, `inbound`, `config`, `setup`
 - Response surfaces: `preview`, `replies`, `rendering`, `keyboard`, `outbound-markup`, `outbound-attachments`, `outbound`, `voice`, `status`
 - Controls and application menu UI: `commands`, `menu`, `menu-model`, `menu-thinking`, `menu-status`, `menu-queue`, `model`, `prompts`

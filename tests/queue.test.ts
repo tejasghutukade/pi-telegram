@@ -3101,7 +3101,7 @@ test("Session runtime helper runs start side effects in order", async () => {
   await startTelegramSessionRuntime({
     ctx: "ctx",
     currentModel,
-    loadConfig: async () => {
+    loadConfig: async (_ctx) => {
       events.push("load");
     },
     applyState: (state) => {
@@ -3131,7 +3131,7 @@ test("Session runtime start swallows only stale deferred-dispatch context bindin
   const baseDeps = {
     ctx: "ctx",
     currentModel,
-    loadConfig: async () => {},
+    loadConfig: async (_ctx: string) => {},
     applyState: () => {},
     prepareTempDir: async () => {},
     updateStatus: () => {},
@@ -3177,7 +3177,7 @@ test("Session lifecycle runtime binds state applier into lifecycle hooks", async
     { provider: string; id: string }
   >({
     getCurrentModel: () => createQueueTestModel(),
-    loadConfig: async () => {
+    loadConfig: async (_ctx) => {
       events.push("load");
     },
     setQueuedItems: (items) => {
@@ -3260,7 +3260,7 @@ test("Session lifecycle hooks bind start and shutdown runtime ports", async () =
     { id: string }
   >({
     getCurrentModel: (ctx) => ctx.model,
-    loadConfig: async () => {
+    loadConfig: async (_ctx) => {
       events.push("load");
     },
     applySessionStartState: (state) => {

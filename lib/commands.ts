@@ -294,6 +294,7 @@ export interface TelegramBridgeCommandStartPollingResult {
 export interface TelegramBridgeCommandRegistrationDeps {
   promptForConfig: (ctx: ExtensionCommandContext) => Promise<void>;
   getStatusLines: () => string[];
+  prepareConnect: (ctx: ExtensionCommandContext) => Promise<void>;
   reloadConfig: () => Promise<void>;
   hasBotToken: () => boolean;
   startPolling: (
@@ -342,7 +343,7 @@ export function registerTelegramBridgeCommands(
   pi.registerCommand("telegram-connect", {
     description: "Start the Telegram bridge in this π session",
     handler: async (_args, ctx) => {
-      await deps.reloadConfig();
+      await deps.prepareConnect(ctx);
       if (!deps.hasBotToken()) {
         await deps.promptForConfig(ctx);
         return;

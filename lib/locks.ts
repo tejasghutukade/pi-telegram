@@ -17,6 +17,11 @@ import { dirname, join, resolve } from "node:path";
 
 export const TELEGRAM_LOCK_KEY = "@llblab/pi-telegram";
 
+export function getTelegramLockKey(botId?: number): string {
+  if (botId === undefined) return TELEGRAM_LOCK_KEY;
+  return `${TELEGRAM_LOCK_KEY}:${botId}`;
+}
+
 function getAgentDir(): string {
   return process.env.PI_CODING_AGENT_DIR
     ? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -71,9 +76,26 @@ export interface TelegramLockContextStore<TContext extends TelegramLockContext> 
 
 export interface TelegramLockRuntimeOptions {
   key?: string;
+  getKey?: () => string;
+  getLegacyMigrationBotId?: () => number | undefined;
   locksPath?: string;
   pid?: number;
   isProcessAlive?: (pid: number) => boolean;
+}
+
+export function migrateLegacyTelegramLock(
+  locks: Record<string, unknown>,
+  botId?: number,
+): { locks: Record<string, unknown>; migrated: boolean } {
+  if (botId === undefined) return { locks, migrated: false };
+  const scopedKey = getTelegramLockKey(botId);
+  if (locks[scopedKey]) return { locks, migrated: false };
+  const legacy = locks[TELEGRAM_LOCK_KEY];
+  if (!legacy) return { locks, migrated: false };
+  const next = { ...locks };
+  next[scopedKey] = legacy;
+  delete next[TELEGRAM_LOCK_KEY];
+  return { locks: next, migrated: true };
 }
 
 export interface TelegramLockedPollingStartOptions {
@@ -168,7 +190,7 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-function formatLock(lock: TelegramLockEntry): string {
+export function formatLock(lock: TelegramLockEntry): string {
   return lock.cwd ? `pid ${lock.pid}, cwd ${lock.cwd}` : `pid ${lock.pid}`;
 }
 
@@ -192,7 +214,7 @@ function ownsLockContext(
   return !lock.cwd || !ctx || lock.cwd === ctx.cwd;
 }
 
-function snapshotLockContext(ctx: TelegramLockContext): TelegramLockContext {
+export function snapshotLockContext(ctx: TelegramLockContext): TelegramLockContext {
   return { cwd: ctx.cwd };
 }
 
@@ -209,17 +231,41 @@ function formatLockState(state: TelegramLockState): string {
   }
 }
 
+export function createTelegramBotScopedLockRuntime<
+  TContext extends TelegramLockContext,
+>(
+  getBotId: () => number | undefined,
+  options: TelegramLockRuntimeOptions = {},
+): TelegramLockRuntime<TContext> {
+  return createTelegramLockRuntime({
+    ...options,
+    getKey: () => getTelegramLockKey(getBotId()),
+    getLegacyMigrationBotId: getBotId,
+  });
+}
+
 export function createTelegramLockRuntime<TContext extends TelegramLockContext>(
   options: TelegramLockRuntimeOptions = {},
 ): TelegramLockRuntime<TContext> {
-  const key = options.key ?? TELEGRAM_LOCK_KEY;
+  const resolveKey = () => options.getKey?.() ?? options.key ?? TELEGRAM_LOCK_KEY;
   const locksPath = options.locksPath ?? getLocksPath();
   const pid = options.pid ?? process.pid;
   const isAlive = options.isProcessAlive ?? isProcessAlive;
-  const readLock = () => parseTelegramLockEntry(readLocks(locksPath)[key]);
+  const readLocksDocument = () => {
+    let locks = readLocks(locksPath);
+    const botId = options.getLegacyMigrationBotId?.();
+    const migrated = migrateLegacyTelegramLock(locks, botId);
+    if (migrated.migrated) {
+      writeLocks(locksPath, migrated.locks);
+      locks = migrated.locks;
+    }
+    return locks;
+  };
+  const readLock = () =>
+    parseTelegramLockEntry(readLocksDocument()[resolveKey()]);
   const writeLock = (lock: TelegramLockEntry) => {
-    const locks = readLocks(locksPath);
-    locks[key] = lock;
+    const locks = readLocksDocument();
+    locks[resolveKey()] = lock;
     writeLocks(locksPath, locks);
   };
   return {
@@ -234,8 +280,8 @@ export function createTelegramLockRuntime<TContext extends TelegramLockContext>(
     release: () => {
       const state = getLockState(readLock(), pid, isAlive);
       if (state.kind === "active-here" || state.kind === "stale") {
-        const locks = readLocks(locksPath);
-        delete locks[key];
+        const locks = readLocksDocument();
+        delete locks[resolveKey()];
         writeLocks(locksPath, locks);
       }
       return state;

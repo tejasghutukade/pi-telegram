@@ -9,6 +9,7 @@ import {
   type TelegramSectionRegistry,
 } from "./sections.ts";
 import type { TelegramTimeMode } from "./config.ts";
+import type { TelegramProfileConfigStore } from "./config.ts";
 import type { TelegramInlineKeyboardMarkup } from "./keyboard.ts";
 import type { TelegramModelMenuState } from "./menu-model.ts";
 import type { MenuModel } from "./model.ts";
@@ -85,7 +86,8 @@ export interface TelegramSettingsMenuMessageUpdateDeps extends TelegramSettingsS
 export interface TelegramSettingsMenuRuntimeDeps<
   TContext,
   TModel extends MenuModel = MenuModel,
-> extends TelegramSettingsMutationDeps {
+> extends TelegramSettingsMutationDeps, Partial<TelegramBotProfileSettingsDeps> {
+  getSessionCwdFromContext?: (ctx: TContext) => string | undefined;
   getModelMenuState: (
     chatId: number,
     ctx: TContext,
@@ -118,8 +120,22 @@ export const PROACTIVE_PUSH_SETTINGS_TITLE = "<b>📌 Proactive push:</b>";
 export const TIME_INJECTION_MODE_SETTINGS_TITLE =
   "<b>🕒 Time injection mode:</b>";
 export const VOICE_REPLY_MODE_SETTINGS_TITLE = "<b>👄 Voice reply mode:</b>";
+export const BOT_PROFILE_SETTINGS_TITLE = "<b>🤖 Telegram bot:</b>";
 
 type TelegramVoiceReplyModeSetting = TelegramVoiceReplyMode | "hidden";
+
+export interface TelegramBotProfileSettingsDeps {
+  getActiveBotId: () => number | undefined;
+  getActiveBotUsername: () => string | undefined;
+  listProfiles: () => Array<{
+    botId: number;
+    botUsername?: string;
+    allowedUserId?: number;
+  }>;
+  switchSessionProfile: (cwd: string, botId: number) => Promise<void>;
+  removeProfile: (botId: number) => Promise<void>;
+  getSessionCwd: () => string | undefined;
+}
 
 function getVoiceReplyModeLabel(mode: TelegramVoiceReplyModeSetting): string {
   return mode;
@@ -188,16 +204,24 @@ export function buildTelegramSettingsMenuReplyMarkup(
   timeInjectionMode: TelegramTimeMode,
   sectionRegistry?: TelegramSectionRegistry,
   voiceReplyModeConfigured = true,
+  botProfileLabel?: string,
 ): TelegramSettingsMenuReplyMarkup {
   const rows: Array<Array<{ text: string; callback_data: string }>> = [
     [{ text: "⬆️ Main menu", callback_data: "menu:back" }],
   ];
-  // Extension settings rows before built-in controls
   if (sectionRegistry) {
     const settingsRows = getTelegramExtensionSettingsRows(sectionRegistry);
     for (const row of settingsRows) {
       rows.push([{ text: row.label, callback_data: row.callback_data }]);
     }
+  }
+  if (botProfileLabel) {
+    rows.push([
+      {
+        text: `🤖 Bot: ${botProfileLabel}`,
+        callback_data: "settings:open:bot",
+      },
+    ]);
   }
   rows.push(
     [
@@ -226,10 +250,160 @@ export function buildTelegramSettingsMenuReplyMarkup(
   return { inline_keyboard: rows };
 }
 
+export function buildBotProfileSettingsText(
+  activeBotUsername: string | undefined,
+  activeBotId: number | undefined,
+  profiles: Array<{ botId: number; botUsername?: string }>,
+): string {
+  const activeLabel = activeBotUsername
+    ? `@${activeBotUsername}`
+    : activeBotId !== undefined
+      ? `bot ${activeBotId}`
+      : "not bound";
+  const profileLines =
+    profiles.length === 0
+      ? "No saved bot profiles yet. Run /telegram-setup in π."
+      : profiles
+          .map((profile) => {
+            const label = profile.botUsername
+              ? `@${profile.botUsername}`
+              : `bot ${profile.botId}`;
+            const active =
+              profile.botId === activeBotId ? " (this session)" : "";
+            return `<code>-</code> ${label}${active}`;
+          })
+          .join("\n");
+  return [
+    `${BOT_PROFILE_SETTINGS_TITLE} <code>${activeLabel}</code>`,
+    "",
+    "Choose which saved bot profile this π session uses.",
+    "Run /telegram-connect after switching or removing a bot.",
+    "",
+    profileLines,
+  ].join("\n");
+}
+
+function formatBotProfileLabel(profile: {
+  botId: number;
+  botUsername?: string;
+}): string {
+  return profile.botUsername
+    ? `@${profile.botUsername}`
+    : `bot ${profile.botId}`;
+}
+
+export function buildBotProfileRemoveListText(
+  profiles: Array<{ botId: number; botUsername?: string }>,
+): string {
+  const profileLines = profiles
+    .map((profile) => `<code>-</code> ${formatBotProfileLabel(profile)}`)
+    .join("\n");
+  return [
+    "<b>🗑 Remove bot profile:</b>",
+    "",
+    "Choose a saved bot profile to remove from telegram.json.",
+    "",
+    profileLines,
+  ].join("\n");
+}
+
+export function buildBotProfileRemoveListReplyMarkup(
+  profiles: Array<{ botId: number; botUsername?: string }>,
+): TelegramSettingsMenuReplyMarkup {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [
+    [{ text: "⬆️ Back", callback_data: "settings:open:bot" }],
+  ];
+  for (const profile of profiles) {
+    rows.push([
+      {
+        text: `🗑 ${formatBotProfileLabel(profile)}`,
+        callback_data: `settings:remove:bot:${profile.botId}`,
+      },
+    ]);
+  }
+  return { inline_keyboard: rows };
+}
+
+export function buildBotProfileRemoveConfirmationText(botLabel: string): string {
+  return `<b>Remove ${botLabel}?</b>`;
+}
+
+export function buildBotProfileRemoveConfirmationReplyMarkup(
+  botId: number,
+): TelegramSettingsMenuReplyMarkup {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "🗑 Yes, remove",
+          callback_data: `settings:confirm-remove:bot:${botId}`,
+        },
+        {
+          text: "❌ No",
+          callback_data: "settings:keep:bot",
+        },
+      ],
+    ],
+  };
+}
+
+export function buildBotProfileSettingsReplyMarkup(
+  profiles: Array<{ botId: number; botUsername?: string }>,
+  activeBotId: number | undefined,
+): TelegramSettingsMenuReplyMarkup {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [
+    [{ text: "⬆️ Back", callback_data: "settings:list" }],
+  ];
+  for (const profile of profiles) {
+    const label = profile.botUsername
+      ? `@${profile.botUsername}`
+      : `bot ${profile.botId}`;
+    rows.push([
+      {
+        text: `${profile.botId === activeBotId ? "🟢 " : ""}${label}`,
+        callback_data: `settings:set:bot:${profile.botId}`,
+      },
+    ]);
+  }
+  if (profiles.length > 0) {
+    rows.push([
+      {
+        text: "🗑 Remove bot",
+        callback_data: "settings:open:bot-remove",
+      },
+    ]);
+  }
+  return { inline_keyboard: rows };
+}
+
+export async function updateBotProfileSettingsMessage(
+  deps: TelegramSettingsMenuCallbackDeps & TelegramBotProfileSettingsDeps,
+): Promise<void> {
+  const profiles = deps.listProfiles();
+  await deps.updateSettingsMessage(
+    buildBotProfileSettingsText(
+      deps.getActiveBotUsername(),
+      deps.getActiveBotId(),
+      profiles,
+    ),
+    buildBotProfileSettingsReplyMarkup(profiles, deps.getActiveBotId()),
+  );
+}
+
+function formatBotProfileSettingsLabel(
+  activeBotUsername: string | undefined,
+  activeBotId: number | undefined,
+): string | undefined {
+  if (activeBotUsername) return `@${activeBotUsername}`;
+  if (activeBotId !== undefined) return `bot ${activeBotId}`;
+  return undefined;
+}
+
 export async function openTelegramSettingsMenu<
   TModel extends MenuModel = MenuModel,
 >(
-  deps: TelegramSettingsMenuOpenDeps<TModel>,
+  deps: TelegramSettingsMenuOpenDeps<TModel> &
+    Partial<TelegramBotProfileSettingsDeps>,
   sectionRegistry?: TelegramSectionRegistry,
 ): Promise<void> {
   const state = await deps.getModelMenuState();
@@ -242,6 +416,10 @@ export async function openTelegramSettingsMenu<
       deps.getTimeInjectionMode(),
       sectionRegistry,
       deps.isVoiceReplyModeConfigured(),
+      formatBotProfileSettingsLabel(
+        deps.getActiveBotUsername?.(),
+        deps.getActiveBotId?.(),
+      ),
     ),
   );
   if (messageId === undefined) return;
@@ -312,7 +490,8 @@ export function buildVoiceReplyModeSettingsReplyMarkup(
 }
 
 export async function updateTelegramSettingsMenuMessage(
-  deps: TelegramSettingsMenuMessageUpdateDeps,
+  deps: TelegramSettingsMenuMessageUpdateDeps &
+    Partial<TelegramBotProfileSettingsDeps>,
   sectionRegistry?: TelegramSectionRegistry,
 ): Promise<void> {
   await deps.updateSettingsMessage(
@@ -323,6 +502,10 @@ export async function updateTelegramSettingsMenuMessage(
       deps.getTimeInjectionMode(),
       sectionRegistry,
       deps.isVoiceReplyModeConfigured(),
+      formatBotProfileSettingsLabel(
+        deps.getActiveBotUsername?.(),
+        deps.getActiveBotId?.(),
+      ),
     ),
   );
 }
@@ -361,12 +544,76 @@ export async function updateVoiceReplyModeSettingsMessage(
 export async function handleTelegramSettingsMenuCallbackAction(
   callbackQueryId: string,
   data: string | undefined,
-  deps: TelegramSettingsMenuCallbackDeps,
+  deps: TelegramSettingsMenuCallbackDeps &
+    Partial<TelegramBotProfileSettingsDeps>,
 ): Promise<boolean> {
   if (!data?.startsWith("settings:")) return false;
   if (data === "settings:list") {
     await updateTelegramSettingsMenuMessage(deps, deps.sectionRegistry);
     await deps.answerCallbackQuery(callbackQueryId);
+    return true;
+  }
+  if (data === "settings:open:bot" && deps.listProfiles && deps.getSessionCwd) {
+    await updateBotProfileSettingsMessage(
+      deps as TelegramSettingsMenuCallbackDeps & TelegramBotProfileSettingsDeps,
+    );
+    await deps.answerCallbackQuery(callbackQueryId);
+    return true;
+  }
+  if (data === "settings:open:bot-remove" && deps.listProfiles) {
+    const profiles = deps.listProfiles();
+    await deps.updateSettingsMessage(
+      buildBotProfileRemoveListText(profiles),
+      buildBotProfileRemoveListReplyMarkup(profiles),
+    );
+    await deps.answerCallbackQuery(callbackQueryId);
+    return true;
+  }
+  if (data.startsWith("settings:remove:bot:") && deps.listProfiles) {
+    const botId = Number(data.slice("settings:remove:bot:".length));
+    const profile = deps.listProfiles().find((entry) => entry.botId === botId);
+    if (!Number.isInteger(botId) || botId <= 0 || !profile) {
+      await deps.answerCallbackQuery(callbackQueryId, "Bot profile unavailable.");
+      return true;
+    }
+    await deps.updateSettingsMessage(
+      buildBotProfileRemoveConfirmationText(formatBotProfileLabel(profile)),
+      buildBotProfileRemoveConfirmationReplyMarkup(botId),
+    );
+    await deps.answerCallbackQuery(callbackQueryId);
+    return true;
+  }
+  if (data === "settings:keep:bot" && deps.listProfiles && deps.getSessionCwd) {
+    await updateBotProfileSettingsMessage(
+      deps as TelegramSettingsMenuCallbackDeps & TelegramBotProfileSettingsDeps,
+    );
+    await deps.answerCallbackQuery(callbackQueryId);
+    return true;
+  }
+  if (data.startsWith("settings:confirm-remove:bot:") && deps.removeProfile) {
+    const botId = Number(data.slice("settings:confirm-remove:bot:".length));
+    if (!Number.isInteger(botId) || botId <= 0) {
+      await deps.answerCallbackQuery(callbackQueryId, "Bot profile unavailable.");
+      return true;
+    }
+    try {
+      await deps.removeProfile(botId);
+      if (deps.listProfiles && deps.getSessionCwd) {
+        await updateBotProfileSettingsMessage(
+          deps as TelegramSettingsMenuCallbackDeps & TelegramBotProfileSettingsDeps,
+        );
+      } else {
+        await updateTelegramSettingsMenuMessage(deps, deps.sectionRegistry);
+      }
+      await deps.answerCallbackQuery(
+        callbackQueryId,
+        "Bot profile removed. Run /telegram-setup to add one again.",
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to remove bot profile.";
+      await deps.answerCallbackQuery(callbackQueryId, message);
+    }
     return true;
   }
   if (data === "settings:open:proactive") {
@@ -385,6 +632,29 @@ export async function handleTelegramSettingsMenuCallbackAction(
   ) {
     await updateTimeInjectionModeSettingsMessage(deps);
     await deps.answerCallbackQuery(callbackQueryId);
+    return true;
+  }
+  if (data.startsWith("settings:set:bot:") && deps.switchSessionProfile) {
+    const botId = Number(data.slice("settings:set:bot:".length));
+    const cwd = deps.getSessionCwd?.();
+    if (!Number.isInteger(botId) || botId <= 0 || !cwd) {
+      await deps.answerCallbackQuery(callbackQueryId, "Bot profile unavailable.");
+      return true;
+    }
+    try {
+      await deps.switchSessionProfile(cwd, botId);
+      await updateBotProfileSettingsMessage(
+        deps as TelegramSettingsMenuCallbackDeps & TelegramBotProfileSettingsDeps,
+      );
+      await deps.answerCallbackQuery(
+        callbackQueryId,
+        `Switched to bot ${botId}. Reconnect with /telegram-connect if needed.`,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to switch bot profile.";
+      await deps.answerCallbackQuery(callbackQueryId, message);
+    }
     return true;
   }
   if (data.startsWith("settings:set:voice-reply:")) {
@@ -443,6 +713,25 @@ export async function handleTelegramSettingsMenuCallbackAction(
   return true;
 }
 
+export function createTelegramBotProfileSettingsPorts(
+  store: TelegramProfileConfigStore,
+): Pick<
+  TelegramBotProfileSettingsDeps,
+  | "getActiveBotId"
+  | "getActiveBotUsername"
+  | "listProfiles"
+  | "switchSessionProfile"
+  | "removeProfile"
+> {
+  return {
+    getActiveBotId: store.getActiveBotId.bind(store),
+    getActiveBotUsername: () => store.get().botUsername,
+    listProfiles: store.listProfiles.bind(store),
+    switchSessionProfile: store.switchSessionProfile.bind(store),
+    removeProfile: store.removeProfile.bind(store),
+  };
+}
+
 export function createTelegramSettingsMenuRuntime<
   TContext,
   TModel extends MenuModel = MenuModel,
@@ -459,6 +748,8 @@ export function createTelegramSettingsMenuRuntime<
           getVoiceReplyMode: deps.getVoiceReplyMode,
           isVoiceReplyModeConfigured: deps.isVoiceReplyModeConfigured,
           getTimeInjectionMode: deps.getTimeInjectionMode,
+          getActiveBotId: deps.getActiveBotId,
+          getActiveBotUsername: deps.getActiveBotUsername,
           sendSettingsMenu: (state, text, replyMarkup) =>
             deps.sendInteractiveMessage(
               state.chatId,
@@ -477,6 +768,8 @@ export function createTelegramSettingsMenuRuntime<
           getVoiceReplyMode: deps.getVoiceReplyMode,
           isVoiceReplyModeConfigured: deps.isVoiceReplyModeConfigured,
           getTimeInjectionMode: deps.getTimeInjectionMode,
+          getActiveBotId: deps.getActiveBotId,
+          getActiveBotUsername: deps.getActiveBotUsername,
           updateSettingsMessage: (text, replyMarkup) =>
             deps.editInteractiveMessage(
               state.chatId,
@@ -488,8 +781,10 @@ export function createTelegramSettingsMenuRuntime<
         },
         sectionRegistry,
       ),
-    handleCallbackQuery: async (query) => {
+    handleCallbackQuery: async (query, ctx) => {
       if (!query.data?.startsWith("settings:")) return false;
+      const sessionCwd =
+        deps.getSessionCwdFromContext?.(ctx) ?? deps.getSessionCwd?.();
       const state = deps.getStoredModelMenuState(query.message?.message_id);
       if (!state) {
         const voiceMode = query.data.slice("settings:set:voice-reply:".length);
@@ -545,6 +840,12 @@ export function createTelegramSettingsMenuRuntime<
         setProactivePushEnabled: deps.setProactivePushEnabled,
         setVoiceReplyMode: deps.setVoiceReplyMode,
         setTimeInjectionMode: deps.setTimeInjectionMode,
+        getActiveBotId: deps.getActiveBotId,
+        getActiveBotUsername: deps.getActiveBotUsername,
+        listProfiles: deps.listProfiles,
+        switchSessionProfile: deps.switchSessionProfile,
+        removeProfile: deps.removeProfile,
+        getSessionCwd: () => sessionCwd,
         updateSettingsMessage: (text, replyMarkup) =>
           deps.editInteractiveMessage(
             state.chatId,

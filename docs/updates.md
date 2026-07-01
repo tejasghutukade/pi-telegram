@@ -136,13 +136,13 @@ This means:
 
 ## Ownership semantics
 
-The handler registry is ownership-agnostic and does not interact with the `locks.json` singleton lock documented in [Locks](./locks.md). When the locked polling runtime stops `pi-telegram`'s `getUpdates` loop, for example after ownership is moved to another pi process, handlers stop receiving updates because no updates are being fetched. They are not unregistered.
+The handler registry is ownership-agnostic and does not interact directly with per-bot `locks.json` entries documented in [Locks](./locks.md). When polling stops for a bot — for example after ownership moves to another π instance — handlers stop receiving updates because no updates are being fetched. They are not unregistered.
 
 If a layered extension needs to react to ownership changes, it should observe `pi-telegram` lifecycle events through the standard pi extension hooks rather than through the handler registry.
 
 ## Not a multiplexer
 
-This registry does not multiplex one bot across multiple pi processes, and it does not bypass Telegram's single-polling-connection-per-bot constraint. To run multiple pi instances on Telegram, give each instance its own bot and its own `~/.pi/agent` directory; the registry is for layered extensions inside **one** pi process.
+This registry does not multiplex one bot across multiple pi processes, and it does not bypass Telegram's single-polling-connection-per-bot constraint. Multiple π sessions can share one `~/.pi/agent` directory when each session binds to a different bot profile; each bot still has at most one active `getUpdates` loop. The registry is for layered extensions inside **one** pi process.
 
 ## Relationship to extension sections
 

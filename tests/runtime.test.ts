@@ -10,6 +10,8 @@ import { join } from "node:path";
 import testRoot, { mock, type TestContext } from "node:test";
 
 import * as Runtime from "../lib/runtime.ts";
+import { LEGACY_TELEGRAM_BOT_ID } from "../lib/config.ts";
+import { getTelegramLockKey } from "../lib/locks.ts";
 
 type RuntimeTestHandler = (context: TestContext) => void | Promise<void>;
 type RuntimeTelegramExtension = (typeof import("../index.ts"))["default"];
@@ -119,6 +121,12 @@ async function writeRuntimeTelegramLocks(
   );
 }
 
+function runtimeScopedTelegramLockKey(
+  botId = LEGACY_TELEGRAM_BOT_ID,
+): string {
+  return getTelegramLockKey(botId);
+}
+
 function createRuntimeDeferredResponse() {
   let resolve: (value: Response) => void = () => {};
   const promise = new Promise<Response>((promiseResolve) => {
@@ -147,6 +155,7 @@ function createRuntimeExtensionContext(
   overrides: Record<string, unknown> = {},
 ) {
   return {
+    cwd: "/repo/runtime-test",
     hasUI: true,
     model: undefined,
     signal: undefined,
@@ -824,7 +833,7 @@ test("Extension runtime finalizes queued turn after polling ownership moves away
       join(await ensureRuntimeAgentDir(), "locks.json"),
       JSON.stringify(
         {
-          "@llblab/pi-telegram": {
+          [runtimeScopedTelegramLockKey()]: {
             pid: process.pid + 1_000_000,
             cwd: "/tmp/other-pi-instance",
           },
@@ -951,7 +960,7 @@ test("Extension runtime dispatches accepted queued work after polling ownership 
     );
     await handlers.get("agent_start")?.({}, ctx);
     await writeRuntimeTelegramLocks({
-      "@llblab/pi-telegram": {
+      [runtimeScopedTelegramLockKey()]: {
         pid: process.pid + 1_000_000,
         cwd: "/repo/queue-owner-b",
       },
@@ -1069,7 +1078,7 @@ test("Extension runtime resolves stale same-cwd lock before proactive local resu
       proactivePush: true,
     });
     await writeRuntimeTelegramLocks({
-      "@llblab/pi-telegram": {
+      [runtimeScopedTelegramLockKey()]: {
         pid: process.pid + 1_000_000,
         cwd,
       },
@@ -1184,7 +1193,7 @@ test("Extension runtime skips proactive local result without Telegram lock owner
       proactivePush: true,
     });
     await writeRuntimeTelegramLocks({
-      "@llblab/pi-telegram": {
+      [runtimeScopedTelegramLockKey()]: {
         pid: process.pid + 1_000_000,
         cwd: "/repo/another-instance",
       },

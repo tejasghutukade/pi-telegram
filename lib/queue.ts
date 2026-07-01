@@ -1242,7 +1242,7 @@ export interface TelegramSessionStateApplier<TQueueItem, TModel> {
 export interface TelegramSessionStartRuntimeDeps<TContext, TModel = unknown> {
   ctx: TContext;
   currentModel: TModel | undefined;
-  loadConfig: () => Promise<void>;
+  loadConfig: (ctx: TContext) => Promise<void>;
   applyState: (state: TelegramSessionStartState<TModel>) => void;
   bindDeferredDispatchContext?: (ctx: TContext) => void;
   prepareTempDir: () => Promise<unknown>;
@@ -1267,7 +1267,7 @@ export interface TelegramSessionLifecycleHookRuntimeDeps<
   TModel = unknown,
 > extends TelegramRuntimeEventRecorderPort {
   getCurrentModel: (ctx: TContext) => TModel | undefined;
-  loadConfig: () => Promise<void>;
+  loadConfig: (ctx: TContext) => Promise<void>;
   applySessionStartState: (state: TelegramSessionStartState<TModel>) => void;
   bindDeferredDispatchContext?: (ctx: TContext) => void;
   prepareTempDir: () => Promise<unknown>;
@@ -1424,7 +1424,7 @@ export function buildTelegramSessionShutdownState<
 export async function startTelegramSessionRuntime<TContext, TModel = unknown>(
   deps: TelegramSessionStartRuntimeDeps<TContext, TModel>,
 ): Promise<void> {
-  await deps.loadConfig();
+  await deps.loadConfig(deps.ctx);
   deps.applyState(buildTelegramSessionStartState(deps.currentModel));
   await deps.prepareTempDir();
   try {

@@ -31,6 +31,7 @@ export interface TelegramSetupDeps {
   hasUI: boolean;
   env: NodeJS.ProcessEnv;
   config: TelegramSetupConfig;
+  sessionCwd?: string;
   promptInput: (label: string, value: string) => Promise<string | undefined>;
   promptEditor: (label: string, value: string) => Promise<string | undefined>;
   getMe: (botToken: string) => Promise<{
@@ -39,6 +40,7 @@ export interface TelegramSetupDeps {
     description?: string;
   }>;
   persistConfig: (config: TelegramSetupConfig) => Promise<void>;
+  bindSession?: (cwd: string, botId: number) => Promise<void>;
   notify: (message: string, level: "info" | "error") => void;
   startPolling: () => unknown | Promise<unknown>;
   updateStatus: () => void;
@@ -64,9 +66,11 @@ export interface TelegramSetupPromptRuntimeDeps<
   env?: NodeJS.ProcessEnv;
   getConfig: () => TelegramSetupConfig;
   setConfig: (config: TelegramSetupConfig) => void;
+  getSessionCwd?: (ctx: TContext) => string | undefined;
   setupGuard: TelegramSetupGuard;
   getMe: TelegramSetupDeps["getMe"];
   persistConfig: (config: TelegramSetupConfig) => Promise<void>;
+  bindSession?: (cwd: string, botId: number) => Promise<void>;
   startPolling: (ctx: TContext) => unknown | Promise<unknown>;
   updateStatus: (ctx: TContext) => void;
   recordRuntimeEvent?: (
@@ -143,6 +147,13 @@ export async function runTelegramSetup(
   nextConfig.botId = data.result.id;
   nextConfig.botUsername = data.result.username;
   await deps.persistConfig(nextConfig);
+  if (
+    nextConfig.botId !== undefined &&
+    deps.sessionCwd &&
+    deps.bindSession
+  ) {
+    await deps.bindSession(deps.sessionCwd, nextConfig.botId);
+  }
   deps.notify(
     `Telegram bot connected: @${nextConfig.botUsername ?? "unknown"}`,
     "info",
@@ -169,10 +180,12 @@ export function createTelegramSetupPromptRuntime<
         hasUI: ctx.hasUI,
         env: deps.env ?? process.env,
         config: deps.getConfig(),
+        sessionCwd: deps.getSessionCwd?.(ctx),
         promptInput: (label, value) => ctx.ui.input(label, value),
         promptEditor: (label, value) => ctx.ui.editor(label, value),
         getMe: deps.getMe,
         persistConfig: deps.persistConfig,
+        bindSession: deps.bindSession,
         notify: (message, level) => ctx.ui.notify(message, level),
         startPolling: () => deps.startPolling(ctx),
         updateStatus: () => deps.updateStatus(ctx),
