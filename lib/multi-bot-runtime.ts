@@ -6,6 +6,7 @@
 
 import type * as BotConnections from "./bot-connections.ts";
 import * as BotConnectionsModule from "./bot-connections.ts";
+import { isTelegramAutoConnectEnabled } from "./config.ts";
 import type { TelegramConfigDocument, TelegramProfileConfigStore } from "./config.ts";
 import {
   LEGACY_TELEGRAM_BOT_ID,
@@ -144,6 +145,8 @@ export function createTelegramMultiBotBridgeRuntime<
       getBotIdForCwd: deps.getBotIdForCwd,
       hasBotToken: deps.configStore.hasBotTokenForBot.bind(deps.configStore),
       canStartPolling: deps.canStartPolling,
+      shouldAutoConnectOnSessionStart: () =>
+        isTelegramAutoConnectEnabled(deps.configStore.get()),
       formatStartBlockedMessage: deps.formatStartBlockedMessage,
       multiPollingManager,
       updateStatus: deps.updateStatus,

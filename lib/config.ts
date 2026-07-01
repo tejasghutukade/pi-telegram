@@ -57,6 +57,7 @@ export interface TelegramConfig {
   attachmentHandlers?: TelegramInboundHandlerConfig[];
   outboundHandlers?: TelegramOutboundHandlerConfig[];
   proactivePush?: boolean;
+  autoConnect?: boolean;
   voice?: {
     replyMode?: "manual" | "mirror" | "always";
     sendTranscript?: boolean;
@@ -71,8 +72,15 @@ export interface TelegramConfigDefaults {
   attachmentHandlers?: TelegramInboundHandlerConfig[];
   outboundHandlers?: TelegramOutboundHandlerConfig[];
   proactivePush?: boolean;
+  autoConnect?: boolean;
   voice?: TelegramConfig["voice"];
   time?: TelegramTimeConfig;
+}
+
+export function isTelegramAutoConnectEnabled(
+  config: Pick<TelegramConfig, "autoConnect">,
+): boolean {
+  return config.autoConnect !== false;
 }
 
 export const TELEGRAM_CONFIG_VERSION = 2;
@@ -202,6 +210,7 @@ function mergeProfileWithDefaults(
       profile.attachmentHandlers ?? defaults.attachmentHandlers,
     outboundHandlers: profile.outboundHandlers ?? defaults.outboundHandlers,
     proactivePush: profile.proactivePush ?? defaults.proactivePush,
+    autoConnect: profile.autoConnect ?? defaults.autoConnect,
     voice:
       defaults.voice || profile.voice
         ? { ...defaults.voice, ...profile.voice }
@@ -400,6 +409,7 @@ function stripSharedDefaultsFromProfile(
     "attachmentHandlers",
     "outboundHandlers",
     "proactivePush",
+    "autoConnect",
     "voice",
     "time",
   ] as const;

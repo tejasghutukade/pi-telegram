@@ -109,7 +109,7 @@ Cross-session prompts for another bound project are stored in `~/.pi/agent/teleg
 - `/telegram-connect` binds the current π session `cwd` to a bot profile, acquires or moves that bot's lock, then starts polling.
 - Settings → **Bot** switches or removes saved profiles; switch/remove stops polling and releases the old bot's lock when no other session still binds that bot. Run `/telegram-connect` after switching to start polling for the new profile.
 - `/telegram-disconnect` stops polling and releases ownership.
-- Session start resumes polling only when the existing lock already points at the current `pid`/`cwd`, or when a stale same-`cwd` lock can be safely replaced after process restart.
+- Session start resumes polling only when the existing lock already points at the current `pid`/`cwd`, or when a stale same-`cwd` lock can be safely replaced after process restart. Set `autoConnect: false` in `telegram.json` to require manual `/telegram-connect` instead.
 - Pi `print`/`json` run modes stay passive: they do not start or resume Telegram polling even if a lock is present. Older Pi runtimes without `ctx.mode` keep the previous compatibility behavior.
 - Inherited child sessions that see the same `telegram.json` but do not own the `pid`/`cwd` lock must not auto-start polling or call `getUpdates` unless the operator force-takes ownership.
 - Session replacement suspends polling/watchers without releasing ownership so the next session-start hook in the same process can resume.

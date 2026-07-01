@@ -80,6 +80,7 @@ interface TelegramConfigDocument {
     attachmentHandlers?: TelegramInboundHandlerConfig[];
     outboundHandlers?: TelegramOutboundHandlerConfig[];
     proactivePush?: boolean;
+    autoConnect?: boolean;
     voice?: TelegramConfig["voice"];
     time?: TelegramConfig["time"];
   };
@@ -100,6 +101,7 @@ interface TelegramConfig {
   allowedUserId?: number;
   lastUpdateId?: number; // runtime-managed
   proactivePush?: boolean;
+  autoConnect?: boolean;
   inboundHandlers?: TelegramInboundHandlerConfig[];
   attachmentHandlers?: TelegramInboundHandlerConfig[]; // compatibility alias
   outboundHandlers?: TelegramOutboundHandlerConfig[];

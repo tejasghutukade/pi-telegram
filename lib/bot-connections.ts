@@ -22,6 +22,7 @@ export interface TelegramBotConnectionRegistryDeps<
   getBotIdForCwd: (cwd: string) => number | undefined;
   hasBotToken: (botId: number) => boolean;
   canStartPolling?: (ctx: TContext) => boolean;
+  shouldAutoConnectOnSessionStart?: () => boolean;
   formatStartBlockedMessage?: (ctx: TContext) => string;
   multiPollingManager: TelegramMultiPollingManager<TContext>;
   updateStatus: (ctx: TContext) => void;
@@ -145,6 +146,9 @@ export function createTelegramBotConnectionRegistry<
   const canStartPolling = (ctx: TContext): boolean =>
     deps.canStartPolling?.(ctx) ?? true;
 
+  const shouldAutoConnectOnSessionStart = (): boolean =>
+    deps.shouldAutoConnectOnSessionStart?.() ?? true;
+
   const formatStartBlockedMessage = (ctx: TContext): string =>
     deps.formatStartBlockedMessage?.(ctx) ??
     "Telegram polling is unavailable in this π run mode.";
@@ -211,6 +215,7 @@ export function createTelegramBotConnectionRegistry<
     onSessionStart: async (_event, ctx) => {
       const botId = deps.getBotIdForCwd(ctx.cwd);
       if (botId === undefined || !deps.hasBotToken(botId)) return;
+      if (!shouldAutoConnectOnSessionStart()) return;
       if (!canStartPolling(ctx)) return;
       const lock = getLock(botId);
       const ownsCurrentLock = lock.owns(ctx);

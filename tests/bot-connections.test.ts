@@ -143,6 +143,33 @@ test("Bot connection registry suspendForBot stops polling by bot id", async () =
   }
 });
 
+test("Bot connection registry does not auto-start polling when autoConnect is false", async () => {
+  const temp = createTempLockPath();
+  const { manager, events } = createTestManager();
+  try {
+    const registry = createTelegramBotConnectionRegistry({
+      getBotIdForCwd: () => 111,
+      hasBotToken: () => true,
+      shouldAutoConnectOnSessionStart: () => false,
+      multiPollingManager: manager,
+      updateStatus: () => undefined,
+      locksPath: temp.path,
+      pid: 10,
+    });
+    await registry.connect({ cwd: "/work" });
+    await registry.suspendForCwd("/work");
+    assert.equal(manager.isActive(111), false);
+    const eventsBeforeResume = events.length;
+
+    await registry.onSessionStart({}, { cwd: "/work" });
+    assert.equal(manager.isActive(111), false);
+    assert.equal(events.length, eventsBeforeResume);
+  } finally {
+    await manager.stop();
+    rmSync(temp.dir, { recursive: true, force: true });
+  }
+});
+
 test("Bot connection registry releaseLockForBot releases owned lock", async () => {
   const temp = createTempLockPath();
   const { manager } = createTestManager();

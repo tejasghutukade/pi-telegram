@@ -731,6 +731,31 @@ test("Telegram config resolves shared defaults into active profile", async () =>
   assert.deepEqual(document.defaults?.voice, { replyMode: "mirror" });
 });
 
+test("Telegram config resolves autoConnect from shared defaults", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-autoconnect-"));
+  const configPath = join(agentDir, "telegram.json");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      version: 2,
+      defaults: { autoConnect: false },
+      profiles: {
+        "111": {
+          botToken: "token-a",
+          botId: 111,
+          botUsername: "work_bot",
+        },
+      },
+      sessionBindings: { "/work": "111" },
+    }),
+    "utf8",
+  );
+  const store = createTelegramConfigStore({ agentDir, configPath });
+  store.setSessionCwd("/work");
+  await store.load();
+  assert.equal(store.get().autoConnect, false);
+});
+
 test("Telegram config merge on persist keeps concurrent profile writes", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-merge-"));
   const configPath = join(agentDir, "telegram.json");

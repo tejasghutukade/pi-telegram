@@ -109,6 +109,7 @@ Run these inside π, not Telegram:
 - **`/telegram-setup`**: Configure or update the Telegram bot token.
 - **`/telegram-connect`**: Bind this π session to its bot profile, start polling, and acquire the per-bot lock.
 - **`/telegram-disconnect`**: Stop polling in the current π session and release this session's bot lock.
+- **`autoConnect`**: Set `"autoConnect": false` in `telegram.json` `defaults` or a bot profile to disable automatic polling resume on π session start. Polling then starts only through `/telegram-connect`. Default is automatic resume when this `pid`/`cwd` already owns the bot lock.
 - **`/telegram-status`**: Inspect adapter status, connection, polling, execution, queue, and recent redacted runtime/API failure events.
 
 ### Multiple bots across π sessions

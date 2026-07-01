@@ -14,6 +14,7 @@
 - `[Config]` Legacy v1 token-only profiles migrate to `profiles.__legacy__` and resolve as `LEGACY_TELEGRAM_BOT_ID` for connect/routing when the session binds on load. Impact: upgraded installs keep working without re-running setup.
 - `[Offline queue]` Cross-session prompts persist in `telegram-offline-queues.json` with file locking, atomic drain on merge, and restore on merge failure. Impact: concurrent π instances are less likely to lose or duplicate offline turns.
 - `[Settings]` Bot profile switch/remove stops polling and releases the per-bot lock when no other session binds that bot. Impact: switching or removing a bot in Settings does not leave stale lock ownership.
+- `[Config]` Optional `autoConnect: false` in `telegram.json` disables automatic polling resume on π session start; use `/telegram-connect` manually instead. Impact: operators can avoid duplicate `getUpdates` fights when session replace or multi-terminal workflows make auto-resume risky.
 - `[Tests]` Added regressions for profile persistence, v1 migration, legacy binding, per-bot locks, bot connections, session routing, offline queue drain/restore, multi-bot profile manage ports, and the multi-poll manager.
 
 ## 0.17.5: Screenshot Refresh
