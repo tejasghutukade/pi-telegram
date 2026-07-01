@@ -11,7 +11,10 @@
 - `[Settings]` Settings → **Bot → Remove bot** deletes saved profiles with confirmation. Impact: operators can clean up old bots without editing `telegram.json` by hand.
 - `[Config]` Optional document-level `defaults` merge shared handler/voice/time settings into every bot profile unless overridden. Impact: multiple bots can share one handler setup without duplicating config.
 - `[Config]` Config persistence reload-merges disk state before writing so concurrent `/telegram-setup` runs in different terminals are less likely to clobber each other.
-- `[Tests]` Added regressions for profile persistence, v1 migration, per-bot locks, and the multi-poll manager.
+- `[Config]` Legacy v1 token-only profiles migrate to `profiles.__legacy__` and resolve as `LEGACY_TELEGRAM_BOT_ID` for connect/routing when the session binds on load. Impact: upgraded installs keep working without re-running setup.
+- `[Offline queue]` Cross-session prompts persist in `telegram-offline-queues.json` with file locking, atomic drain on merge, and restore on merge failure. Impact: concurrent π instances are less likely to lose or duplicate offline turns.
+- `[Settings]` Bot profile switch/remove stops polling and releases the per-bot lock when no other session binds that bot. Impact: switching or removing a bot in Settings does not leave stale lock ownership.
+- `[Tests]` Added regressions for profile persistence, v1 migration, legacy binding, per-bot locks, bot connections, session routing, offline queue drain/restore, multi-bot profile manage ports, and the multi-poll manager.
 
 ## 0.17.5: Screenshot Refresh
 

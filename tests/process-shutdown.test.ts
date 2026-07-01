@@ -12,7 +12,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { LEGACY_TELEGRAM_BOT_ID } from "../lib/config.ts";
+import { getTelegramLockKey } from "../lib/locks.ts";
+
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const LEGACY_RUNTIME_LOCK_KEY = getTelegramLockKey(LEGACY_TELEGRAM_BOT_ID);
 const PI_CLI_AVAILABLE = (() => {
   const result = spawnSync("pi", ["--version"], { stdio: "ignore" });
   return !result.error && result.status === 0;
@@ -131,7 +135,7 @@ async function createPiPrintFixtureExtension(tempDir: string): Promise<string> {
       `export default function (pi) {\n` +
       `  const agentDir = process.env.PI_CODING_AGENT_DIR;\n` +
       `  if (process.env.PI_TELEGRAM_TEST_LOCK_MODE === "owner" && agentDir) {\n` +
-      `    writeFileSync(join(agentDir, "locks.json"), JSON.stringify({ "@llblab/pi-telegram": { pid: process.pid } }) + "\\n");\n` +
+      `    writeFileSync(join(agentDir, "locks.json"), JSON.stringify({ ${JSON.stringify(LEGACY_RUNTIME_LOCK_KEY)}: { pid: process.pid } }) + "\\n");\n` +
       `  }\n` +
       `  pi.on("session_start", (_event, ctx) => {\n` +
       `    const forcedMode = process.env.PI_TELEGRAM_TEST_CTX_MODE;\n` +
@@ -253,7 +257,7 @@ test("Child process sharing the agent dir does not poll while parent owns Telegr
     const cwd = "/repo/parent-owner";
     writeFileSync(
       join(agentDir, "locks.json"),
-      JSON.stringify({ "@llblab/pi-telegram": { pid: process.pid, cwd } }) + "\\n",
+      JSON.stringify({ ${JSON.stringify(LEGACY_RUNTIME_LOCK_KEY)}: { pid: process.pid, cwd } }) + "\\n",
     );
     globalThis.fetch = async (input, init = {}) => {
       const method = String(input).split("/").at(-1);
@@ -406,7 +410,7 @@ test("Direct Telegram tools refuse delivery from a non-owner process", async () 
       lastUpdateId: 0,
     },
     {
-      "@llblab/pi-telegram": {
+      [LEGACY_RUNTIME_LOCK_KEY]: {
         pid: process.pid,
         cwd: "/repo/live-owner",
       },
@@ -583,7 +587,7 @@ test(
         proactivePush: true,
       },
       {
-        "@llblab/pi-telegram": {
+        [LEGACY_RUNTIME_LOCK_KEY]: {
           pid: process.pid,
           cwd: "/repo/another-live-owner",
         },
@@ -671,7 +675,7 @@ test("Extension session shutdown lets an active polling owner process exit", asy
     );
     await writeFile(
       join(agentDir, "locks.json"),
-      JSON.stringify({ "@llblab/pi-telegram": { pid: process.pid, cwd } }) + "\\n",
+      JSON.stringify({ ${JSON.stringify(LEGACY_RUNTIME_LOCK_KEY)}: { pid: process.pid, cwd } }) + "\\n",
       "utf8",
     );
 

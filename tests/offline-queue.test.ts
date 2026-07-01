@@ -73,3 +73,29 @@ test("appendTelegramOfflineQueueItem keeps unrelated session queues", () => {
   assert.equal(next.queues["/work"]?.length, 1);
   assert.equal(next.queues["/personal"]?.length, 1);
 });
+
+test("Offline queue store drainForCwd clears persisted queue after read", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-offline-drain-"));
+  const path = join(agentDir, "telegram-offline-queues.json");
+  const store = createTelegramOfflineQueueStore({ agentDir, path });
+  const turn = {
+    kind: "prompt" as const,
+    chatId: 1,
+    replyToMessageId: 2,
+    sourceMessageIds: [2],
+    queueOrder: 0,
+    queueLane: "default" as const,
+    laneOrder: 0,
+    queuedAttachments: [],
+    content: [{ type: "text" as const, text: "[telegram] hello" }],
+    historyText: "hello",
+    statusSummary: "hello",
+  };
+  await store.append("/work", turn);
+  const items = await store.drainForCwd("/work");
+  assert.deepEqual(items, [turn]);
+  const document = JSON.parse(await readFile(path, "utf8")) as {
+    queues: Record<string, unknown[]>;
+  };
+  assert.equal(document.queues["/work"], undefined);
+});

@@ -9,6 +9,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { withTelegramOfflineQueueLock } from "./offline-queue-lock.ts";
 import type { PendingTelegramTurn } from "./queue.ts";
 
 export interface TelegramOfflineQueueDocument {
@@ -77,6 +78,17 @@ export function getTelegramOfflineQueueItems(
   return [...(document.queues[cwd] ?? [])];
 }
 
+export function setTelegramOfflineQueueItems(
+  document: TelegramOfflineQueueDocument,
+  cwd: string,
+  items: PendingTelegramTurn[],
+): TelegramOfflineQueueDocument {
+  const queues = { ...document.queues };
+  if (items.length === 0) delete queues[cwd];
+  else queues[cwd] = [...items];
+  return { version: OFFLINE_QUEUE_VERSION, queues };
+}
+
 export function appendTelegramOfflineQueueItem(
   document: TelegramOfflineQueueDocument,
   cwd: string,
@@ -108,21 +120,51 @@ export function createTelegramOfflineQueueStore(options: {
     path,
     read: () => readTelegramOfflineQueueDocument(path),
     append: async (cwd: string, item: PendingTelegramTurn) => {
-      const document = await readTelegramOfflineQueueDocument(path);
-      await writeTelegramOfflineQueueDocument(
-        appendTelegramOfflineQueueItem(document, cwd, item),
-        path,
-      );
+      await withTelegramOfflineQueueLock(path, async () => {
+        const document = await readTelegramOfflineQueueDocument(path);
+        await writeTelegramOfflineQueueDocument(
+          appendTelegramOfflineQueueItem(document, cwd, item),
+          path,
+        );
+      });
     },
     takeAll: async (cwd: string) => {
-      const document = await readTelegramOfflineQueueDocument(path);
-      const items = getTelegramOfflineQueueItems(document, cwd);
-      if (items.length === 0) return items;
-      await writeTelegramOfflineQueueDocument(
-        clearTelegramOfflineQueue(document, cwd),
-        path,
-      );
-      return items;
+      return withTelegramOfflineQueueLock(path, async () => {
+        const document = await readTelegramOfflineQueueDocument(path);
+        const items = getTelegramOfflineQueueItems(document, cwd);
+        if (items.length === 0) return items;
+        await writeTelegramOfflineQueueDocument(
+          clearTelegramOfflineQueue(document, cwd),
+          path,
+        );
+        return items;
+      });
+    },
+    drainForCwd: async (cwd: string) => {
+      return withTelegramOfflineQueueLock(path, async () => {
+        const document = await readTelegramOfflineQueueDocument(path);
+        const items = getTelegramOfflineQueueItems(document, cwd);
+        if (items.length === 0) return items;
+        await writeTelegramOfflineQueueDocument(
+          clearTelegramOfflineQueue(document, cwd),
+          path,
+        );
+        return items;
+      });
+    },
+    restoreForCwd: async (cwd: string, items: PendingTelegramTurn[]) => {
+      if (items.length === 0) return;
+      await withTelegramOfflineQueueLock(path, async () => {
+        const document = await readTelegramOfflineQueueDocument(path);
+        const concurrent = document.queues[cwd] ?? [];
+        await writeTelegramOfflineQueueDocument(
+          setTelegramOfflineQueueItems(document, cwd, [
+            ...items,
+            ...concurrent,
+          ]),
+          path,
+        );
+      });
     },
   };
 }

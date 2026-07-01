@@ -3131,7 +3131,7 @@ test("Session runtime start swallows only stale deferred-dispatch context bindin
   const baseDeps = {
     ctx: "ctx",
     currentModel,
-    loadConfig: async (_ctx) => {},
+    loadConfig: async (_ctx: string) => {},
     applyState: () => {},
     prepareTempDir: async () => {},
     updateStatus: () => {},

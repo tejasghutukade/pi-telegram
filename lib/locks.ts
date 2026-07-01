@@ -190,7 +190,7 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-function formatLock(lock: TelegramLockEntry): string {
+export function formatLock(lock: TelegramLockEntry): string {
   return lock.cwd ? `pid ${lock.pid}, cwd ${lock.cwd}` : `pid ${lock.pid}`;
 }
 
@@ -214,7 +214,7 @@ function ownsLockContext(
   return !lock.cwd || !ctx || lock.cwd === ctx.cwd;
 }
 
-function snapshotLockContext(ctx: TelegramLockContext): TelegramLockContext {
+export function snapshotLockContext(ctx: TelegramLockContext): TelegramLockContext {
   return { cwd: ctx.cwd };
 }
 

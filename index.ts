@@ -6,6 +6,7 @@
 
 import * as Bindings from "./lib/bindings.ts";
 import * as CommandTemplates from "./lib/command-templates.ts";
+import * as Commands from "./lib/commands.ts";
 import * as Config from "./lib/config.ts";
 import * as Inbound from "./lib/inbound.ts";
 import * as Lifecycle from "./lib/lifecycle.ts";
@@ -305,6 +306,13 @@ export default function (pi: Pi.ExtensionAPI) {
   });
   const botProfileSettingsPorts =
     MenuSettings.createTelegramBotProfileSettingsPorts(configStore);
+  const botProfileManagePorts =
+    MultiBotRuntime.createTelegramBotProfileManagePorts({
+      getActiveBotId: botProfileSettingsPorts.getActiveBotId,
+      switchSessionProfile: configStore.switchSessionProfile.bind(configStore),
+      removeProfile: configStore.removeProfile.bind(configStore),
+      getDocument: configStore.getDocument.bind(configStore),
+    });
   const settingsMenuRuntime = MenuSettings.createTelegramSettingsMenuRuntime(
     {
       getModelMenuState: getQueueMenuState,
@@ -313,7 +321,11 @@ export default function (pi: Pi.ExtensionAPI) {
       editInteractiveMessage,
       sendInteractiveMessage,
       answerCallbackQuery,
-      ...botProfileSettingsPorts,
+      getActiveBotId: botProfileSettingsPorts.getActiveBotId,
+      getActiveBotUsername: botProfileSettingsPorts.getActiveBotUsername,
+      listProfiles: botProfileSettingsPorts.listProfiles,
+      switchSessionProfile: botProfileManagePorts.switchSessionProfile,
+      removeProfile: botProfileManagePorts.removeProfile,
       getSessionCwdFromContext: Pi.getExtensionContextCwd,
       getSessionCwd: configStore.getSessionCwd.bind(configStore),
       ...configControls,
@@ -372,11 +384,13 @@ export default function (pi: Pi.ExtensionAPI) {
     compact,
     recordRuntimeEvent,
   });
+  const inboundHandleUpdate =
+    inboundRouteRuntime.handleUpdate as MultiBotRuntime.TelegramMultiBotBridgeRuntimeDeps<Pi.ExtensionContext>["inboundHandleUpdate"];
   const multiBotRuntime = MultiBotRuntime.createTelegramMultiBotBridgeRuntime({
     configStore,
     getBotIdForCwd,
     offlineQueue: offlineQueueStore,
-    inboundHandleUpdate: inboundRouteRuntime.handleUpdate,
+    inboundHandleUpdate,
     getContextCwd: Pi.getExtensionContextCwd,
     canStartPolling: Pi.canStartPollingInExtensionContext,
     formatStartBlockedMessage: Pi.formatPollingStartBlockedByRunMode,
@@ -387,6 +401,7 @@ export default function (pi: Pi.ExtensionAPI) {
     statusBridges: multiBotStatusBridges,
   });
   const botConnectionRegistry = multiBotRuntime.botConnectionRegistry;
+  botProfileManagePorts.registry = botConnectionRegistry;
   const botConnectionRuntime = multiBotRuntime.botConnectionRuntime;
   const lockOwnershipGuard = multiBotRuntime.lockOwnershipGuard;
   const ownsTelegramDirectDelivery =
@@ -428,7 +443,9 @@ export default function (pi: Pi.ExtensionAPI) {
   const mergeOfflineQueueForSession =
     MultiBotRuntime.createTelegramOfflineQueueSessionMerger(
       offlineQueueStore,
-      telegramQueueStore,
+      telegramQueueStore as Parameters<
+        typeof MultiBotRuntime.createTelegramOfflineQueueSessionMerger
+      >[1],
       dispatchNextQueuedTelegramTurn,
       recordRuntimeEvent,
     );

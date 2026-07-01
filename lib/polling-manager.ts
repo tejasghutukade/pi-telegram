@@ -152,7 +152,9 @@ export function createTelegramProfilePollingRuntime<
     handleUpdate: (update, ctx, botId) => deps.handleUpdate(update, ctx),
     stopTypingLoop: deps.stopTypingLoop,
     updateStatus: deps.updateStatus,
-    recordRuntimeEvent: deps.recordRuntimeEvent,
+    recordRuntimeEvent: deps.recordRuntimeEvent as NonNullable<
+      TelegramMultiPollingManagerDeps<TUpdate, TContext>["recordRuntimeEvent"]
+    >,
     createPollLoopDeps: (botId) => {
       const api = createPerBotApiRuntime(botId, perBotApiRuntimes, sharedDeps);
       return {
@@ -166,7 +168,10 @@ export function createTelegramProfilePollingRuntime<
           });
         },
         deleteWebhook: api.deleteWebhook,
-        getUpdates: api.getUpdates,
+        getUpdates: api.getUpdates as TelegramPollingControllerRuntimeDeps<
+          TUpdate,
+          TContext
+        >["getUpdates"],
       };
     },
   });

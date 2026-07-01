@@ -6,13 +6,19 @@
 
 import type * as BotConnections from "./bot-connections.ts";
 import * as BotConnectionsModule from "./bot-connections.ts";
-import type { TelegramProfileConfigStore } from "./config.ts";
+import type { TelegramConfigDocument, TelegramProfileConfigStore } from "./config.ts";
+import {
+  LEGACY_TELEGRAM_BOT_ID,
+  LEGACY_TELEGRAM_PROFILE_KEY,
+} from "./config.ts";
+import type { TelegramLockContext } from "./locks.ts";
 import type { TelegramMultiPollingManager } from "./polling-manager.ts";
 import * as PollingManager from "./polling-manager.ts";
 import * as SessionRouter from "./session-router.ts";
 import * as TelegramApi from "./telegram-api.ts";
 import * as Updates from "./updates.ts";
 import type { createTelegramOfflineQueueStore } from "./offline-queue.ts";
+import type { PendingTelegramTurn } from "./queue.ts";
 
 export interface TelegramMultiBotBridgeRuntimeDeps<
   TContext extends { cwd: string },
@@ -155,7 +161,9 @@ export function createTelegramMultiBotBridgeRuntime<
   pollingActivity.bind(
     createTelegramSessionPollingActivityReader(
       deps.configStore,
-      botConnectionRegistry,
+      botConnectionRegistry as BotConnections.TelegramBotConnectionRuntime<{
+        cwd: string;
+      }>,
     ),
   );
   return {
@@ -285,7 +293,7 @@ export function createTelegramOfflineQueueSessionMerger<TContext>(
   offlineQueue: ReturnType<typeof createTelegramOfflineQueueStore>,
   telegramQueueStore: {
     getQueuedItems: () => unknown[];
-    setQueuedItems: (items: unknown[]) => void;
+    setQueuedItems: (items: any[]) => void;
   },
   dispatchNextQueuedTelegramTurn: (ctx: TContext) => void,
   recordRuntimeEvent: TelegramMultiBotBridgeRuntimeDeps<{ cwd: string }>["recordRuntimeEvent"],
@@ -296,12 +304,8 @@ export function createTelegramOfflineQueueSessionMerger<TContext>(
       {
         offlineQueue,
         getQueuedItems: () =>
-          telegramQueueStore.getQueuedItems() as import("./queue.ts").PendingTelegramTurn[],
-        setQueuedItems: (items) =>
-          telegramQueueStore.setQueuedItems([
-            ...telegramQueueStore.getQueuedItems(),
-            ...items,
-          ]),
+          telegramQueueStore.getQueuedItems() as PendingTelegramTurn[],
+        setQueuedItems: (items) => telegramQueueStore.setQueuedItems(items),
         dispatchNextQueuedTelegramTurn,
         ctx,
         recordRuntimeEvent,
@@ -310,7 +314,66 @@ export function createTelegramOfflineQueueSessionMerger<TContext>(
   };
 }
 
-export function createTelegramMultiBotSessionStartHook<TContext>(
+export function createTelegramBotProfileManagePorts(deps: {
+  getActiveBotId: () => number | undefined;
+  switchSessionProfile: (cwd: string, botId: number) => Promise<void>;
+  removeProfile: (botId: number) => Promise<void>;
+  getDocument?: () => TelegramConfigDocument;
+}): {
+  registry?: Pick<
+    BotConnections.TelegramBotConnectionRuntime<{ cwd: string }>,
+    "suspendForBot" | "releaseLockForBot"
+  >;
+  switchSessionProfile: (cwd: string, botId: number) => Promise<void>;
+  removeProfile: (botId: number) => Promise<void>;
+} {
+  const ports: {
+    registry?: Pick<
+      BotConnections.TelegramBotConnectionRuntime<{ cwd: string }>,
+      "suspendForBot" | "releaseLockForBot"
+    >;
+    switchSessionProfile: (cwd: string, botId: number) => Promise<void>;
+    removeProfile: (botId: number) => Promise<void>;
+  } = {
+    switchSessionProfile: async (cwd, botId) => {
+      const previousBotId = deps.getActiveBotId();
+      await deps.switchSessionProfile(cwd, botId);
+      if (
+        previousBotId !== undefined &&
+        previousBotId !== botId &&
+        ports.registry
+      ) {
+        const bindings = deps.getDocument?.().sessionBindings;
+        const stillBoundElsewhere = bindings
+          ? Object.entries(bindings).some(([boundCwd, boundKey]) => {
+              if (boundCwd === cwd) return false;
+              if (boundKey === String(previousBotId)) return true;
+              return (
+                previousBotId === LEGACY_TELEGRAM_BOT_ID &&
+                boundKey === LEGACY_TELEGRAM_PROFILE_KEY
+              );
+            })
+          : false;
+        if (!stillBoundElsewhere) {
+          await ports.registry.suspendForBot(previousBotId);
+          ports.registry.releaseLockForBot(previousBotId);
+        }
+      }
+    },
+    removeProfile: async (botId) => {
+      if (ports.registry) {
+        await ports.registry.suspendForBot(botId);
+        ports.registry.releaseLockForBot(botId);
+      }
+      await deps.removeProfile(botId);
+    },
+  };
+  return ports;
+}
+
+export function createTelegramMultiBotSessionStartHook<
+  TContext extends TelegramLockContext,
+>(
   botConnectionRegistry: Pick<
     BotConnections.TelegramBotConnectionRuntime<TContext>,
     "onSessionStart"
@@ -325,10 +388,17 @@ export function createTelegramMultiBotSessionStartHook<TContext>(
 
 export function getTelegramBotIdForBoundCwd(
   bindings: Record<string, string>,
-  profiles: Record<string, { botId?: number }>,
+  profiles: Record<string, { botId?: number; botToken?: string }>,
   cwd: string,
 ): number | undefined {
   const key = bindings[cwd];
   if (!key) return undefined;
-  return profiles[key]?.botId;
+  const profile = profiles[key];
+  if (profile?.botId !== undefined) return profile.botId;
+  if (key === LEGACY_TELEGRAM_PROFILE_KEY && profile?.botToken) {
+    return LEGACY_TELEGRAM_BOT_ID;
+  }
+  const numeric = Number.parseInt(key, 10);
+  if (Number.isFinite(numeric) && profiles[key]) return numeric;
+  return undefined;
 }

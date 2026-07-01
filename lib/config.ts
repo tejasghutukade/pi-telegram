@@ -265,6 +265,52 @@ export function botIdToProfileKey(botId: number): string {
   return String(botId);
 }
 
+export const LEGACY_TELEGRAM_PROFILE_KEY = "__legacy__";
+
+export const LEGACY_TELEGRAM_BOT_ID = 0;
+
+function isLegacyTelegramProfileKey(key: string): boolean {
+  return key === LEGACY_TELEGRAM_PROFILE_KEY;
+}
+
+function resolveTelegramProfileKeyForBotId(
+  document: Pick<TelegramConfigDocument, "profiles">,
+  botId: number,
+): string | undefined {
+  const key = botIdToProfileKey(botId);
+  if (document.profiles[key]) return key;
+  if (
+    botId === LEGACY_TELEGRAM_BOT_ID &&
+    document.profiles[LEGACY_TELEGRAM_PROFILE_KEY]
+  ) {
+    return LEGACY_TELEGRAM_PROFILE_KEY;
+  }
+  return undefined;
+}
+
+function resolveTelegramBotIdFromProfileKey(
+  document: Pick<TelegramConfigDocument, "profiles">,
+  key: string,
+): number | undefined {
+  const profile = document.profiles[key];
+  if (profile?.botId !== undefined) return profile.botId;
+  if (isLegacyTelegramProfileKey(key) && profile?.botToken) {
+    return LEGACY_TELEGRAM_BOT_ID;
+  }
+  const numeric = Number.parseInt(key, 10);
+  if (Number.isFinite(numeric) && document.profiles[key]) return numeric;
+  return undefined;
+}
+
+export function getBoundBotIdForCwd(
+  document: Pick<TelegramConfigDocument, "profiles" | "sessionBindings">,
+  cwd: string,
+): number | undefined {
+  const key = document.sessionBindings[cwd];
+  if (!key) return undefined;
+  return resolveTelegramBotIdFromProfileKey(document, key);
+}
+
 function isTelegramConfigDocumentV2(
   value: unknown,
 ): value is TelegramConfigDocument {
@@ -345,7 +391,9 @@ function stripSharedDefaultsFromProfile(
     "lastUpdateId",
   ] as const;
   for (const key of identityKeys) {
-    if (resolved[key] !== undefined) stored[key] = resolved[key];
+    if (resolved[key] !== undefined) {
+      (stored as Record<string, unknown>)[key] = resolved[key];
+    }
   }
   const sharedKeys = [
     "inboundHandlers",
@@ -358,7 +406,7 @@ function stripSharedDefaultsFromProfile(
   for (const key of sharedKeys) {
     if (resolved[key] === undefined) continue;
     if (JSON.stringify(resolved[key]) !== JSON.stringify(baseline[key])) {
-      stored[key] = resolved[key];
+      (stored as Record<string, unknown>)[key] = resolved[key];
     }
   }
   return stored;
@@ -463,7 +511,7 @@ export function createTelegramConfigStore(
   let config: TelegramConfig = options.initialConfig ?? {};
   let sessionCwd: string | undefined;
   const agentDir = options.agentDir ?? getAgentDir();
-  const configPath = options.configPath ?? getConfigPath();
+  const configPath = options.configPath ?? join(agentDir, "telegram.json");
 
   const syncConfigFromDocument = () => {
     config = resolveActiveProfile(document, sessionCwd);
@@ -532,6 +580,13 @@ export function createTelegramConfigStore(
           });
         },
       });
+      if (
+        sessionCwd &&
+        document.profiles[LEGACY_TELEGRAM_PROFILE_KEY] &&
+        !document.sessionBindings[sessionCwd]
+      ) {
+        document.sessionBindings[sessionCwd] = LEGACY_TELEGRAM_PROFILE_KEY;
+      }
       syncConfigFromDocument();
       loadedDocument = cloneTelegramConfigDocument(document);
       if (shouldPersistMigration) await persistDocument();
@@ -545,7 +600,13 @@ export function createTelegramConfigStore(
       syncConfigFromDocument();
     },
     getSessionCwd: () => sessionCwd,
-    getActiveBotId: () => config.botId,
+    getActiveBotId: () => {
+      if (sessionCwd) {
+        const bound = getBoundBotIdForCwd(document, sessionCwd);
+        if (bound !== undefined) return bound;
+      }
+      return config.botId;
+    },
     getDocument: () => ({
       version: TELEGRAM_CONFIG_VERSION,
       defaults: document.defaults ? { ...document.defaults } : undefined,
@@ -568,8 +629,8 @@ export function createTelegramConfigStore(
       await persistDocument();
     },
     switchSessionProfile: async (cwd, botId) => {
-      const key = botIdToProfileKey(botId);
-      if (!document.profiles[key]) {
+      const key = resolveTelegramProfileKeyForBotId(document, botId);
+      if (!key) {
         throw new Error(`Telegram bot profile ${botId} is not configured.`);
       }
       sessionCwd = cwd;
@@ -578,7 +639,8 @@ export function createTelegramConfigStore(
       await persistDocument();
     },
     removeProfile: async (botId) => {
-      const key = botIdToProfileKey(botId);
+      const key = resolveTelegramProfileKeyForBotId(document, botId);
+      if (!key) return;
       delete document.profiles[key];
       for (const [cwd, boundKey] of Object.entries(document.sessionBindings)) {
         if (boundKey === key) delete document.sessionBindings[cwd];
@@ -587,27 +649,37 @@ export function createTelegramConfigStore(
       await persistDocument();
     },
     mutateProfile: async (botId, mutate) => {
-      const key = botIdToProfileKey(botId);
+      const key = resolveTelegramProfileKeyForBotId(document, botId);
+      if (!key) return;
       const profile = { ...(document.profiles[key] ?? {}) };
       mutate(profile);
       document.profiles[key] = profile;
-      if (config.botId === botId) config = { ...profile };
+      if (getBoundBotIdForCwd(document, sessionCwd ?? "") === botId) {
+        config = { ...profile };
+      }
       await persistDocument();
     },
     getProfile: (botId) => {
-      const profile = document.profiles[botIdToProfileKey(botId)];
+      const key = resolveTelegramProfileKeyForBotId(document, botId);
+      const profile = key ? document.profiles[key] : undefined;
       return profile ? { ...profile } : undefined;
     },
-    listProfiles: () =>
-      Object.values(document.profiles)
-        .filter((profile) => profile.botId !== undefined)
-        .map((profile) => ({
-          botId: profile.botId!,
+    listProfiles: () => {
+      const summaries: TelegramBotProfileSummary[] = [];
+      for (const [key, profile] of Object.entries(document.profiles)) {
+        const botId = resolveTelegramBotIdFromProfileKey(document, key);
+        if (botId === undefined) continue;
+        summaries.push({
+          botId,
           botUsername: profile.botUsername,
           allowedUserId: profile.allowedUserId,
-        })),
+        });
+      }
+      return summaries;
+    },
     findCwdForBot: (botId) => {
-      const key = botIdToProfileKey(botId);
+      const key = resolveTelegramProfileKeyForBotId(document, botId);
+      if (!key) return undefined;
       for (const [cwd, boundKey] of Object.entries(document.sessionBindings)) {
         if (boundKey === key) return cwd;
       }
@@ -615,15 +687,14 @@ export function createTelegramConfigStore(
     },
     withBotProfile: async (botId, run) => {
       const prevCwd = sessionCwd;
-      const boundCwd = (() => {
-        const key = botIdToProfileKey(botId);
-        for (const [cwd, boundKey] of Object.entries(document.sessionBindings)) {
-          if (boundKey === key) return cwd;
-        }
-        return undefined;
-      })();
+      const key = resolveTelegramProfileKeyForBotId(document, botId);
+      const boundCwd = key
+        ? Object.entries(document.sessionBindings).find(
+            ([, boundKey]) => boundKey === key,
+          )?.[0]
+        : undefined;
       if (boundCwd) sessionCwd = boundCwd;
-      const profile = document.profiles[botIdToProfileKey(botId)];
+      const profile = key ? document.profiles[key] : undefined;
       if (profile) {
         config = mergeProfileWithDefaults(document.defaults, profile);
       }
@@ -634,7 +705,10 @@ export function createTelegramConfigStore(
         syncConfigFromDocument();
       }
     },
-    hasBotTokenForBot: (botId) => !!document.profiles[botIdToProfileKey(botId)]?.botToken,
+    hasBotTokenForBot: (botId) => {
+      const key = resolveTelegramProfileKeyForBotId(document, botId);
+      return key ? !!document.profiles[key]?.botToken : false;
+    },
   };
 }
 

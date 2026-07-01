@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`pi-telegram` is a session-local π extension that binds one Telegram DM to one running π session. It owns the Telegram bridge boundary:
+`pi-telegram` is a session-local π extension that connects Telegram bot profiles to π sessions. A single π process can poll multiple bots concurrently, and each session `cwd` binds to one bot profile through `telegram.json` `sessionBindings`. It owns the Telegram bridge boundary:
 
 - Poll Telegram updates and enforce single-user pairing.
 - Translate Telegram text, callbacks, media, and files into π turns.
@@ -49,8 +49,14 @@ The repository uses a **Flat Domain DAG**:
 
 - `index.ts`: composition root for live ports, session state, transport adapters, and lifecycle registration.
 - `api`: Bot API helpers, retries, uploads/downloads, temp cleanup, byte limits, chat actions, lazy token clients, and API error recording.
-- `config` / `setup`: versioned `telegram.json` with bot profiles and per-session bindings, bot token setup, first-user pairing, authorization, env fallback, atomic persistence, and live profile accessors.
-- `locks` / `polling`: per-bot polling ownership (`@llblab/pi-telegram:<botId>`), takeover/restart behavior, multi-bot poll controllers, offset persistence per profile, and poll-loop wiring.
+- `config` / `setup`: versioned `telegram.json` with bot profiles and per-session bindings, v1 `__legacy__` profile migration, bot token setup, first-user pairing, authorization, env fallback, atomic persistence, reload-merge on persist, and live profile accessors.
+- `locks`: per-bot lock keys (`@llblab/pi-telegram:<botId>`), legacy global-key migration, acquire/release semantics, and ownership watchers.
+- `polling` / `polling-manager`: per-bot polling controller state, offset persistence per profile, and poll-loop wiring for same-process multi-bot.
+- `bot-connections`: per-bot lock registry, connect/disconnect/suspend, session-scoped ownership, and command-runtime stop/release.
+- `multi-bot-runtime`: composition glue for multi-bot polling, session routing, offline merge hooks, profile manage ports, and status bridges.
+- `session-router`: bot-scoped inbound routing, cross-session offline stash, and offline merge on session start.
+- `offline-queue`: durable `telegram-offline-queues.json` persistence for cross-session prompt turns.
+- `offline-queue-lock`: cross-process file locking for offline-queue read-modify-write.
 - `updates` / `routing`: update classification, authorization planning, callbacks, edited messages, reactions, and inbound route composition.
 - `media` / `text-groups` / `time-injection` / `turns` / `inbound`: inbound text/media/file extraction, rich-message reply-context plaintext recovery, media-group debounce, long-text coalescing, optional `[time]` context, handler execution, and prompt-turn assembly/editing.
 - `queue`: queue item contracts, lane admission/order, readiness gates, mutations, dispatch runtime, prompt/control enqueueing, and session/agent/tool lifecycle sequencing.
@@ -84,7 +90,9 @@ Mirrored domain regressions live in `/tests/*.test.ts`. Shared test fixtures sho
 
 ## Configuration And Ownership
 
-Telegram configuration lives in `~/.pi/agent/telegram.json` as a version-2 document with `profiles` keyed by `botId` and `sessionBindings` keyed by π session `cwd`. Polling ownership lives separately in `~/.pi/agent/locks.json` under `@llblab/pi-telegram:<botId>`.
+Telegram configuration lives in `~/.pi/agent/telegram.json` as a version-2 document with `profiles` keyed by numeric `botId` (or `__legacy__` for migrated v1 token-only profiles) and `sessionBindings` keyed by π session `cwd`. Polling ownership lives separately in `~/.pi/agent/locks.json` under `@llblab/pi-telegram:<botId>`.
+
+Cross-session prompts for another bound project are stored in `~/.pi/agent/telegram-offline-queues.json` under the target session `cwd`. Merge uses `drainForCwd` under `offline-queue-lock`, restores failed turns on merge error, and appends merged items to the live queue on session start.
 
 ### Setup Flow
 
@@ -99,6 +107,7 @@ Telegram configuration lives in `~/.pi/agent/telegram.json` as a version-2 docum
 ### Runtime Ownership
 
 - `/telegram-connect` binds the current π session `cwd` to a bot profile, acquires or moves that bot's lock, then starts polling.
+- Settings → **Bot** switches or removes saved profiles; switch/remove stops polling and releases the old bot's lock when no other session still binds that bot. Run `/telegram-connect` after switching to start polling for the new profile.
 - `/telegram-disconnect` stops polling and releases ownership.
 - Session start resumes polling only when the existing lock already points at the current `pid`/`cwd`, or when a stale same-`cwd` lock can be safely replaced after process restart.
 - Pi `print`/`json` run modes stay passive: they do not start or resume Telegram polling even if a lock is present. Older Pi runtimes without `ctx.mode` keep the previous compatibility behavior.

@@ -20,6 +20,8 @@ import {
   createTelegramVoiceReplyModeGetter,
   createTelegramVoiceReplyModeSetter,
   getTelegramAuthorizationState,
+  getBoundBotIdForCwd,
+  LEGACY_TELEGRAM_BOT_ID,
   mergeTelegramConfigDocumentsOnPersist,
   migrateTelegramConfigToDocument,
   pairTelegramUserIfNeeded,
@@ -801,4 +803,21 @@ test("mergeTelegramConfigDocumentsOnPersist preserves unrelated disk profiles", 
   assert.equal(merged.profiles["111"]?.lastUpdateId, 9);
   assert.equal(merged.profiles["222"]?.botUsername, "personal_bot");
   assert.equal(merged.sessionBindings["/personal"], "222");
+});
+
+test("getBoundBotIdForCwd resolves legacy v1 profile without botId", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-telegram-legacy-bound-"));
+  const store = createTelegramConfigStore({ agentDir });
+  store.setSessionCwd("/legacy");
+  await store.load();
+  await store.persist({
+    botToken: "111:aaa",
+    allowedUserId: 42,
+    lastUpdateId: 0,
+  });
+  assert.equal(store.getActiveBotId(), LEGACY_TELEGRAM_BOT_ID);
+  assert.equal(
+    getBoundBotIdForCwd(store.getDocument(), "/legacy"),
+    LEGACY_TELEGRAM_BOT_ID,
+  );
 });

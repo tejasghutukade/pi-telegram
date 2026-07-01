@@ -83,7 +83,7 @@ interface TelegramConfigDocument {
     voice?: TelegramConfig["voice"];
     time?: TelegramConfig["time"];
   };
-  profiles: Record<string, TelegramBotProfile>; // key = String(botId)
+  profiles: Record<string, TelegramBotProfile>; // key = String(botId) or "__legacy__" after v1 migration
   sessionBindings: Record<string, string>; // cwd -> profile key
 }
 

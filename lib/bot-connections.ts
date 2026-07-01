@@ -49,7 +49,9 @@ export interface TelegramBotConnectionRuntime<
   stop: () => Promise<string>;
   suspend: () => Promise<void>;
   suspendForCwd: (cwd: string) => Promise<void>;
+  suspendForBot: (botId: number) => Promise<void>;
   releaseLockForCwd: (cwd: string) => string | undefined;
+  releaseLockForBot: (botId: number) => string | undefined;
   onSessionStart: (_event: unknown, ctx: TContext) => Promise<void>;
   ownsSessionBot: (ctx: TContext) => boolean;
   isPollingActive: (botId?: number) => boolean;
@@ -187,12 +189,25 @@ export function createTelegramBotConnectionRegistry<
     await stopPollingForBot(botId);
   };
 
+  const releaseLockForBot = (botId: number): string | undefined => {
+    const lock = getLock(botId);
+    const state = lock.release();
+    if (state.kind === "active-elsewhere") {
+      return `Telegram bridge is active in another π instance (${formatLock(state.lock)}).`;
+    }
+    if (state.kind === "stale") {
+      return `Removed stale Telegram bridge lock (${formatLock(state.lock)}).`;
+    }
+    return undefined;
+  };
+
   return {
     connect,
     start: connect,
     stop: async () => "Telegram bridge disconnected.",
     suspend: async () => undefined,
     suspendForCwd,
+    suspendForBot: stopPollingForBot,
     onSessionStart: async (_event, ctx) => {
       const botId = deps.getBotIdForCwd(ctx.cwd);
       if (botId === undefined || !deps.hasBotToken(botId)) return;
@@ -227,6 +242,7 @@ export function createTelegramBotConnectionRegistry<
       return getLock(botId).getStatusLabel();
     },
     releaseLockForCwd,
+    releaseLockForBot,
   };
 }
 

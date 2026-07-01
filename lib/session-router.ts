@@ -130,7 +130,7 @@ export async function mergeTelegramOfflineQueueIntoSession<TContext>(
   deps: {
     offlineQueue: Pick<
       ReturnType<typeof createTelegramOfflineQueueStore>,
-      "takeAll"
+      "drainForCwd" | "restoreForCwd"
     >;
     getQueuedItems: () => PendingTelegramTurn[];
     setQueuedItems: (items: PendingTelegramTurn[]) => void;
@@ -143,12 +143,23 @@ export async function mergeTelegramOfflineQueueIntoSession<TContext>(
     ) => void;
   },
 ): Promise<void> {
+  let offlineItems: PendingTelegramTurn[] = [];
   try {
-    const offlineItems = await deps.offlineQueue.takeAll(cwd);
+    offlineItems = await deps.offlineQueue.drainForCwd(cwd);
     if (offlineItems.length === 0) return;
     deps.setQueuedItems([...deps.getQueuedItems(), ...offlineItems]);
     deps.dispatchNextQueuedTelegramTurn(deps.ctx);
   } catch (error) {
+    if (offlineItems.length > 0) {
+      try {
+        await deps.offlineQueue.restoreForCwd(cwd, offlineItems);
+      } catch (restoreError) {
+        deps.recordRuntimeEvent?.("offline-queue", restoreError, {
+          phase: "merge-restore",
+          cwd,
+        });
+      }
+    }
     deps.recordRuntimeEvent?.("offline-queue", error, { phase: "merge", cwd });
   }
 }
